@@ -24,10 +24,8 @@ class Settings(BaseSettings):
     HOST: str = Field(default="0.0.0.0")
     PORT: int = Field(default=8000)
     
-    # Base de datos PostgreSQL (produccion) o SQLite (desarrollo local sin Docker)
-    DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://training_user:training_pass@localhost:5432/training_db"
-    )
+    # Base de datos
+    DATABASE_URL: str = Field(default="sqlite+aiosqlite:///./app.db")
     DB_POOL_SIZE: int = Field(default=5)
     DB_MAX_OVERFLOW: int = Field(default=10)
     
