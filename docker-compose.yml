@@ -1,0 +1,34 @@
+# Docker Compose - Backend API
+# Servicio independiente: FastAPI + Selenium + MCP
+
+services:
+  back-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=${DEBUG:-false}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - TP_EMAIL=${TP_EMAIL}
+      - TP_PASSWORD=${TP_PASSWORD}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - CORS_ORIGINS=*
+    volumes:
+      - backend-logs:/app/logs
+      - backend-workouts:/app/workouts
+    networks:
+      - default
+      - easypanel
+    restart: unless-stopped
+
+volumes:
+  backend-logs:
+  backend-workouts:
+
+networks:
+  easypanel:
+    external: true
+

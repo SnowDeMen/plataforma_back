@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs (se montan como volumen)
+api/logs/
+
+# Base de datos (se monta como volumen)
+api/*.db
+
+# Tests
+api/tests/
+.pytest_cache/
+.coverage
+
+# Git
+.git/
+.gitignore
+
+# Docs
+api/docs/
+*.md
+
+# Archivos temporales
+*.tmp
+*.temp
+.DS_Store
+

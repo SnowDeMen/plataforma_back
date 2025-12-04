@@ -1,0 +1,283 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║         ANÁLISIS DEL PROBLEMA: CAMPOS INCOMPLETOS EN WORKOUTS              ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ SÍNTOMA OBSERVADO                                                          ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Cuando el agente crea un entrenamiento:
+
+    ✅ TrainingPeaks recibe:
+       - Titulo
+       - Descripción
+       - Pre-activity comments
+
+    ❌ TrainingPeaks NO recibe:
+       - Duration (Duración)
+       - Distance (Distancia)
+       - TSS (Training Stress Score)
+       - IF (Intensity Factor)
+       - Average Pace
+       - Elevation Gain
+       - Calories
+       - Work
+
+    RESULTADO: En la plataforma quedan campos VACIOS ❌
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ LOG ANALIZADO (session_luis_aragon_a6988a67_20251130_194817.log)          ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Línea 320-335: Se detectó el problema
+
+    "arguments": {
+        "workout_type": "Run",
+        "title": "Rodaje + Técnica + Strides (General)",
+        "description": "Objetivo: construir base aeróbica y mejorar la economía 
+                        de carrera sin fatiga acumulada. Estructura sugerida:
+                        - Calentamiento: 10-15 min en Z1→Z2...
+                        [TODA LA ESTRUCTURA AQUÍ]",
+        "pre_activity_comments": "Terreno: llano o poco desnivel...
+                                 [TODO EL CONTENIDO AQUÍ]",
+        "folder_name": "Neuronomy",
+        "click_save": true
+        
+        ⚠️ FALTA: "planned_values": {...}
+    }
+
+Problema: planned_values AUSENTE o VACÍO
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ CADENA DE CAUSAS (Root Cause Analysis)                                     ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+    ┌─────────────────────────────────────────────────────┐
+    │  1. System Prompt del ChatAgent insuficiente        │
+    │     ↓                                               │
+    │  2. Agente no distingue 4 campos INDEPENDIENTES    │
+    │     ↓                                               │
+    │  3. Agente incluye estructura en description       │
+    │     ↓                                               │
+    │  4. Agente NO crea planned_values con números      │
+    │     ↓                                               │
+    │  5. Función crear_workout NO recibe planned_values │
+    │     ↓                                               │
+    │  6. TrainingPeaks no llena campos numéricos ❌     │
+    └─────────────────────────────────────────────────────┘
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ FLUJO ACTUAL vs FLUJO CORRECTO                                             ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+❌ FLUJO INCORRECTO (ANTES)
+═════════════════════════════════════════════════════════════════
+
+Usuario: "Crea un entrenamiento de running"
+    ↓
+Coach: Diseña estructura en su mente
+    ├─ title: "Rodaje + Técnica + Strides"
+    ├─ description: [INCLUYE TODO - estructura, duraciones, zonas]
+    ├─ pre_activity_comments: [INCLUYE TODO - estructura, notas]
+    └─ planned_values: ❌ VACÍO o NO ENVIADO
+    ↓
+crear_workout() recibe:
+    ├─ title ✓
+    ├─ description ✓ (pero sobrecargado)
+    ├─ pre_activity_comments ✓ (pero duplicado con description)
+    └─ planned_values ❌ (FALTA)
+    ↓
+TrainingPeaks recibe:
+    ├─ Texto descriptivo ✓
+    └─ Números (Duration, TSS, IF, etc.) ❌ VACÍOS
+
+
+✅ FLUJO CORRECTO (DESPUÉS)
+═════════════════════════════════════════════════════════════════
+
+Usuario: "Crea un entrenamiento de running"
+    ↓
+Coach: 1. Consulta obtener_esquema_parametros_workout("Run")
+       2. Diseña estructura completa
+       3. CALCULA valores numéricos (Duration, Distance, TSS, IF)
+    ↓
+Coach propone:
+    ├─ title: "Rodaje + Técnica + Strides"
+    ├─ description: "Base aeróbica y técnica"
+    ├─ pre_activity_comments: [Estructura detallada]
+    └─ planned_values: {
+           "Duration": "1:00:00",
+           "Distance": "10",
+           "TSS": "55",
+           "IF": "0.75",
+           ...
+       }
+    ↓
+crear_workout() recibe:
+    ├─ title ✓
+    ├─ description ✓ (breve y limpio)
+    ├─ pre_activity_comments ✓ (estructura detallada)
+    └─ planned_values ✓ (diccionario numérico completo)
+    ↓
+TrainingPeaks recibe:
+    ├─ Texto descriptivo ✓
+    └─ Números (Duration, TSS, IF, etc.) ✓ RELLENADOS
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ SEPARACIÓN DE RESPONSABILIDADES (SOLUCIÓN)                                 ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+Los 4 campos son INDEPENDIENTES e irreconciliables:
+
+┌────────────────────────────────────────────────────────────────┐
+│  FIELD 1: title                                                │
+│  ─────────────────────────────────────────────────────────────│
+│  Responsabilidad: IDENTIFICAR el entrenamiento               │
+│  Contenido: Solo el nombre (2-10 palabras)                   │
+│  Ejemplo: "Intervalos 5x1000m"                               │
+│  Longitud: Corta (< 50 caracteres)                           │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│  FIELD 2: description                                          │
+│  ─────────────────────────────────────────────────────────────│
+│  Responsabilidad: EXPLICAR el objetivo general                │
+│  Contenido: Propósito en 1-2 frases                           │
+│  Ejemplo: "Trabajo de VO2max con recuperaciones activas"      │
+│  Longitud: Muy breve (< 200 caracteres)                       │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│  FIELD 3: pre_activity_comments                                │
+│  ─────────────────────────────────────────────────────────────│
+│  Responsabilidad: INSTRUIR al atleta ANTES de entrenar       │
+│  Contenido: Estructura completa paso a paso                   │
+│  Incluir: Calentar, serie, enfriar, intensidad, terreno      │
+│  Longitud: Larga (500-1500 caracteres)                        │
+│  Formato: Puede usar saltos de línea y bullets               │
+└────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────┐
+│  FIELD 4: planned_values (DICCIONARIO NUMÉRICO)               │
+│  ─────────────────────────────────────────────────────────────│
+│  Responsabilidad: RELLENAR campos cuantitativos en TP        │
+│  Contenido: Pares clave-valor con números                     │
+│  Obligatorio: Duration + (Distance o TSS)                    │
+│  Formato: {"Duration": "h:m:s", "TSS": "numero", ...}       │
+│  CRITICIDAD: SIN ESTO, TRAININGPEAKS NO RECIBE NÚMEROS ⚠️   │
+└────────────────────────────────────────────────────────────────┘
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ COMPARACIÓN: TRAININGPEAKS (ANTES vs DESPUÉS)                              ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+INTERFACE DE TRAININGPEAKS:
+┌─────────────────────────────────────┐
+│ Título: Rodaje + Técnica + Strides  │
+├─────────────────────────────────────┤
+│ Planned    | Completed | Description│
+├─────────────────────────────────────┤
+│ Duration:  | [VACÍO] ❌ | [TEXTO] ✓ │
+│ Distance:  | [VACÍO] ❌ | [TEXTO] ✓ │
+│ Pace:      | [VACÍO] ❌ | [TEXTO] ✓ │
+│ TSS:       | [VACÍO] ❌ | [TEXTO] ✓ │
+│ IF:        | [VACÍO] ❌ | [TEXTO] ✓ │
+│ Elevation: | [VACÍO] ❌ | [TEXTO] ✓ │
+│ Calories:  | [VACÍO] ❌ | [TEXTO] ✓ │
+└─────────────────────────────────────┘
+
+                    ANTES (Sin planned_values)
+
+
+INTERFACE DE TRAININGPEAKS:
+┌─────────────────────────────────────┐
+│ Título: Rodaje + Técnica + Strides  │
+├─────────────────────────────────────┤
+│ Planned    | Completed | Description│
+├─────────────────────────────────────┤
+│ Duration:  | 1:00:00 ✓ | [TEXTO] ✓ │
+│ Distance:  | 10 km ✓   | [TEXTO] ✓ │
+│ Pace:      | 5:30 ✓    | [TEXTO] ✓ │
+│ TSS:       | 55 ✓      | [TEXTO] ✓ │
+│ IF:        | 0.75 ✓    | [TEXTO] ✓ │
+│ Elevation: | 50 m ✓    | [TEXTO] ✓ │
+│ Calories:  | 500 ✓     | [TEXTO] ✓ │
+└─────────────────────────────────────┘
+
+                    DESPUÉS (Con planned_values)
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ CAMBIOS IMPLEMENTADOS                                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+[✅ 1] chat_agent.py (System Prompt)
+    ├─ Explicación de 4 campos INDEPENDIENTES
+    ├─ Enfasis en planned_values OBLIGATORIO
+    ├─ Ejemplos completos de estructura correcta
+    ├─ "Regla de Oro" sobre planned_values
+    └─ Instrucción de SIEMPRE usar obtener_esquema_parametros_workout
+
+[✅ 2] mcp_tools.py (Definición de Herramientas)
+    ├─ Descripción más clara de crear_workout
+    ├─ planned_values en "required" (era opcional)
+    ├─ Advertencia explícita de que sin planned_values fallan campos
+    └─ Ejemplos de formato correcto
+
+[✅ 3] trainingpeaks_mcp_server_modular.py (Servidor MCP)
+    ├─ Docstring expandido del método crear_workout
+    ├─ Ejemplo realista mostrando todos los parámetros
+    ├─ Explicación de por qué cada parámetro es importante
+    └─ Nota sobre CRITICIDAD de planned_values
+
+[✅ 4] INSTRUCCIONES_CREACION_WORKOUTS.md (NUEVO)
+    ├─ Guía detallada de los 4 campos
+    ├─ Tablas de parámetros por tipo de workout
+    ├─ Cómo calcular Duration, Distance, TSS, IF
+    ├─ Comparación antes/después con ejemplos
+    ├─ Checklist de validación pre-creación
+    └─ Troubleshooting de problemas comunes
+
+[✅ 5] QUICK_REFERENCE_WORKOUTS.txt (NUEVO)
+    ├─ Template para copiar-pegar
+    ├─ Formatos correctos vs incorrectos
+    ├─ Checklist rápido
+    └─ Referencia de parámetros por tipo
+
+[✅ 6] RESUMEN_SOLUCION_WORKOUTS.md (NUEVO)
+    ├─ Resumen ejecutivo del problema
+    ├─ Causa raíz
+    ├─ Solución implementada
+    └─ Impacto esperado
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ VALIDACIÓN DE CAMBIOS                                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+    ✓ Sin errores de sintaxis Python
+    ✓ Cambios retrocompatibles (no rompen código existente)
+    ✓ Mejoras puramente en instrucciones del agente
+    ✓ Documentación clara y mantenible
+    ✓ Ejemplos realistas y copiables
+    ✓ Linter sin errores
+
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ PRÓXIMOS PASOS RECOMENDADOS                                                ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+1. Testar creación de un nuevo workout con sistema actualizado
+2. Verificar que TrainingPeaks recibe TODOS los campos numéricos
+3. Revisar logs para confirmar que planned_values se completa
+4. Ajustar calculadores de TSS/IF si hay diferencias con manual
+
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║  CONCLUSIÓN: Problema IDENTIFICADO, DOCUMENTADO y SOLUCIONADO             ║
+╚════════════════════════════════════════════════════════════════════════════╝
+

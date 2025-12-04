@@ -1,0 +1,4 @@
+"""
+Interfaces de repositorios (contratos).
+"""
+
