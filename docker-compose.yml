@@ -1,5 +1,9 @@
 # Docker Compose - Backend API
 # Servicio independiente: FastAPI + Selenium + MCP
+#
+# IMPORTANTE: Requiere PostgreSQL desplegado como servicio separado.
+# Configurar DATABASE_URL en EasyPanel apuntando al servicio postgres:
+# DATABASE_URL=postgresql+asyncpg://training_user:password@postgres:5432/training_db
 
 services:
   back-api:
@@ -12,6 +16,8 @@ services:
       - DEBUG=${DEBUG:-false}
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      # Conexion a PostgreSQL (configurar en EasyPanel)
+      - DATABASE_URL=${DATABASE_URL}
       - TP_EMAIL=${TP_EMAIL}
       - TP_PASSWORD=${TP_PASSWORD}
       - OPENAI_API_KEY=${OPENAI_API_KEY}

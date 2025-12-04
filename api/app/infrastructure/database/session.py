@@ -15,12 +15,30 @@ from app.core.config import settings
 # Base para modelos de SQLAlchemy
 Base = declarative_base()
 
+
+def _create_engine_args() -> dict:
+    """
+    Construye los argumentos del engine segun el tipo de base de datos.
+    PostgreSQL usa pool de conexiones, SQLite no lo soporta.
+    """
+    args = {
+        "echo": settings.DEBUG,
+        "future": True,
+    }
+    
+    # Configuracion de pool solo para PostgreSQL
+    if "postgresql" in settings.DATABASE_URL:
+        args.update({
+            "pool_size": settings.DB_POOL_SIZE,
+            "max_overflow": settings.DB_MAX_OVERFLOW,
+            "pool_pre_ping": True,  # Verifica conexion antes de usar
+        })
+    
+    return args
+
+
 # Engine de base de datos
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.DEBUG,
-    future=True
-)
+engine = create_async_engine(settings.DATABASE_URL, **_create_engine_args())
 
 # Session factory
 AsyncSessionLocal = async_sessionmaker(
