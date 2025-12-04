@@ -34,14 +34,20 @@ class AuthService:
     def login(self) -> None:
         """
         Realiza el login en TrainingPeaks.
-        Usa las credenciales de las variables de entorno USER y PASSWORD.
+        Usa las credenciales de las variables de entorno TP_EMAIL y TP_PASSWORD.
         """
+        email = os.getenv("TP_EMAIL")
+        password = os.getenv("TP_PASSWORD")
+        
+        if not email or not password:
+            raise ValueError("Las variables TP_EMAIL y TP_PASSWORD deben estar configuradas")
+        
         user = self._wait.until(EC.element_to_be_clickable((By.NAME, "Username")))
         user.click()
-        user.send_keys(os.getenv("USER"))
+        user.send_keys(email)
         passw = self._wait.until(EC.element_to_be_clickable((By.NAME, "Password")))
         passw.click()
-        passw.send_keys(os.getenv("PASSWORD"))
+        passw.send_keys(password)
         login_button = self._wait.until(EC.element_to_be_clickable((By.ID, "btnSubmit")))
         login_button.click()
         logger.info("Login realizado en TrainingPeaks")
