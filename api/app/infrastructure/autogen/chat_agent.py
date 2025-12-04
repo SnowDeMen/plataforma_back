@@ -239,7 +239,7 @@ Intensidad: Mantén Z2 en bloque central (~70-78% FCmax),
 2. SIEMPRE incluye title, description, pre_activity_comments Y planned_values
 3. planned_values debe tener Duration + al menos TSS o Distance
 4. Los valores numéricos van en pre_activity_comments (texto) Y en planned_values (numeros)
-5. Usa la carpeta "AI Generated" por defecto si el usuario no especifica
+5. Usa la carpeta "Neuronomy" por defecto si el usuario no especifica
 
 Responde siempre en español.
 """

@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     
     # Workouts
     WORKOUTS_DIR: str = Field(default="workouts")
-    DEFAULT_WORKOUT_LIBRARY: str = Field(default="AI Generated")
+    DEFAULT_WORKOUT_LIBRARY: str = Field(default="Neuronomy")
     
     # Logging
     LOG_LEVEL: str = Field(default="INFO")
