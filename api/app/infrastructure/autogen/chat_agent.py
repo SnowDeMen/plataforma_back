@@ -581,7 +581,9 @@ Nombre: {athlete_name}
         
         is_new_model = (
             self.model.startswith("gpt-4o") or
-            "gpt-4o" in self.model
+            self.model.startswith("gpt-5") or
+            "gpt-4o" in self.model or
+            "gpt-5" in self.model
         )
         
         # Temperature (no soportado en modelos de razonamiento)
