@@ -245,7 +245,7 @@ Responde siempre en español.
 """
     
     # Limite de iteraciones de tool calls para evitar loops infinitos
-    MAX_TOOL_ITERATIONS = 10
+    MAX_TOOL_ITERATIONS = 20
     
     def __init__(
         self,
