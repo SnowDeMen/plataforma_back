@@ -27,14 +27,16 @@ async def get_agent_use_cases(
     return AgentUseCases(agent_repository)
 
 
-def get_session_use_cases() -> SessionUseCases:
+def get_session_use_cases(
+    db: AsyncSession = Depends(get_db)
+) -> SessionUseCases:
     """
     Dependencia para obtener los casos de uso de sesiones.
     
     Returns:
         SessionUseCases: Instancia de casos de uso de sesiones
     """
-    return SessionUseCases()
+    return SessionUseCases(db)
 
 
 async def get_chat_use_cases(
