@@ -75,7 +75,7 @@ class DriverManager:
     _sessions: Dict[str, DriverSession] = {}
     
     @classmethod
-    def create_session(cls, athlete_name: str) -> DriverSession:
+    def create_session(cls, athlete_name: str, session_id: Optional[str] = None) -> DriverSession:
         """
         Crea una nueva sesion de driver para un atleta.
         
@@ -83,6 +83,7 @@ class DriverManager:
         
         Args:
             athlete_name: Nombre del atleta
+            session_id: ID de sesion opcional. Si no se provee, se genera uno nuevo.
             
         Returns:
             DriverSession: La sesion creada con el driver activo
@@ -94,7 +95,9 @@ class DriverManager:
             cls.close_session(existing_session.session_id)
         
         # Crear nuevo driver
-        session_id = str(uuid.uuid4())
+        if not session_id:
+            session_id = str(uuid.uuid4())
+            
         driver, wait = cls._create_driver()
         
         # Crear sesion
@@ -140,7 +143,7 @@ class DriverManager:
         return driver, wait
     
     @classmethod
-    def initialize_training_session(cls, athlete_name: str) -> "DriverSession":
+    def initialize_training_session(cls, athlete_name: str, session_id: Optional[str] = None) -> "DriverSession":
         """
         Inicializa una sesion completa de entrenamiento.
         
@@ -157,7 +160,7 @@ class DriverManager:
             DriverSession: La sesion inicializada y lista para usar
         """
         # Crear sesion basica
-        session = cls.create_session(athlete_name)
+        session = cls.create_session(athlete_name, session_id)
         
         try:
             # Login en TrainingPeaks
@@ -176,7 +179,11 @@ class DriverManager:
             return session
             
         except Exception as e:
-            logger.error(f"Error durante inicializacion de sesion: {e}")
+            # Better error logging with full exception details
+            import traceback
+            error_msg = str(e) if str(e) else f"Exception type: {type(e).__name__}"
+            logger.error(f"Error durante inicializacion de sesion: {error_msg}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             # Cerrar sesion en caso de error
             cls.close_session(session.session_id)
             raise

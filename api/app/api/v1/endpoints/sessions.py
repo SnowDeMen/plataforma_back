@@ -266,5 +266,69 @@ def get_mcp_status(session_id: str) -> dict:
         "mcp_path_exists": mcp_status.get("mcp_path_exists", False)
     }
 
-
-
+@router.post(
+    "/{session_id}/restart",
+    response_model=SessionResponseDTO,
+    status_code=status.HTTP_200_OK,
+    summary="Reiniciar driver de sesion"
+)
+async def restart_session(
+    session_id: str,
+    use_cases: SessionUseCases = Depends(get_session_use_cases),
+    db: AsyncSession = Depends(get_db)
+) -> SessionResponseDTO:
+    """
+    Reinicia el driver de Selenium para una sesion existente.
+    
+    Tambien reinicializa el servidor MCP y el agente si es necesario.
+    
+    Args:
+        session_id: ID de la sesion a reiniciar
+        use_cases: Casos de uso de sesiones (inyectado)
+        db: Sesion de base de datos
+        
+    Returns:
+        SessionResponseDTO: Informacion actualizada de la sesion
+    """
+    # 1. Reiniciar driver via use cases
+    session_response = await use_cases.restart_session(session_id)
+    
+    # 2. Log del evento
+    AuditLogger.log_event(
+        session_id=session_id,
+        event="SESSION_RESTARTED",
+        details={"driver_active": True}
+    )
+    
+    # 3. Inicializar servidor MCP
+    driver_session = DriverManager.get_session(session_id)
+    mcp_initialized = False
+    
+    if driver_session:
+        # Detener servidor anterior si existia
+        if MCPServerManager.get_current_session_id() == session_id:
+            MCPServerManager.stop()
+            
+        # Iniciar nuevo servidor MCP
+        mcp_initialized = MCPServerManager.start(
+            driver=driver_session.driver,
+            wait=driver_session.wait,
+            session_id=session_id,
+            run_server=False
+        )
+        
+        if mcp_initialized:
+            logger.info(f"Servidor MCP reinicializado para sesion {session_id}")
+            AuditLogger.log_mcp_call(
+                session_id=session_id,
+                action="MCP_SERVER_RESTART",
+                details={"tools_available": MCPServerManager.get_available_tools()},
+                success=True
+            )
+    
+    # 4. Asegurar que el agente este listo (recargar si es necesario)
+    # ChatManager.get_agent(session_id) validara o recreara el agente si no existe
+    
+    session_response.message = f"Sesion reiniciada correctamente. MCP: {'Activo' if mcp_initialized else 'Inactivo'}"
+    
+    return session_response

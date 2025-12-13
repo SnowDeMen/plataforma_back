@@ -296,7 +296,7 @@ class ChatUseCases:
             session_id=session_id,
             athlete_name=chat_session.athlete_name,
             message_count=len(messages),
-            is_active=chat_session.is_active,
+            is_active=DriverManager.is_session_active(session_id),
             last_message=last_message,
             created_at=chat_session.created_at,
             updated_at=chat_session.updated_at
@@ -445,7 +445,7 @@ class ChatUseCases:
                 session_id=session.session_id,
                 athlete_name=session.athlete_name,
                 message_count=len(messages),
-                is_active=session.is_active,
+                is_active=DriverManager.is_session_active(session.session_id),
                 last_message=last_message,
                 created_at=session.created_at,
                 updated_at=session.updated_at
@@ -495,5 +495,8 @@ class ChatUseCases:
             )
         
         return deleted
+    
+
+
 
 
