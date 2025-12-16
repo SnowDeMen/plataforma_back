@@ -11,8 +11,10 @@ from app.shared.constants.session_constants import (
     VALID_ATHLETES, 
     is_valid_athlete
 )
-from app.shared.exceptions.domain import InvalidAthleteException
+from app.shared.exceptions.domain import InvalidAthleteException, SessionNotFoundException
 from app.infrastructure.driver.driver_manager import DriverManager
+from app.infrastructure.repositories.chat_repository import ChatRepository
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class SessionUseCases:
@@ -20,6 +22,10 @@ class SessionUseCases:
     Casos de uso para gestion de sesiones de entrenamiento.
     Maneja la validacion de atletas y el ciclo de vida del driver.
     """
+    
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self.repository = ChatRepository(db)
     
     def start_session(self, dto: SessionStartDTO) -> SessionResponseDTO:
         """
@@ -109,4 +115,43 @@ class SessionUseCases:
         else:
             logger.warning(f"Sesion {session_id} no encontrada para cerrar")
         return result
+
+    async def restart_session(self, session_id: str) -> SessionResponseDTO:
+        """
+        Reinicia el driver de Selenium para una sesion existente.
+        
+        Args:
+            session_id: ID de la sesion a reiniciar
+            
+        Returns:
+            SessionResponseDTO: Estado de la sesion reiniciada
+            
+        Raises:
+            SessionNotFoundException: Si la sesion no existe
+        """
+        # Obtener sesion de base de datos para saber el atleta
+        session = await self.repository.get_by_session_id(session_id)
+        
+        if not session:
+            raise SessionNotFoundException(session_id)
+            
+        logger.info(f"Reiniciando driver para sesion {session_id} (Atleta: {session.athlete_name})")
+        
+        # Cerrar driver anterior si existe
+        DriverManager.close_session(session_id)
+        
+        # Inicializar nuevo driver mantendo el ID
+        driver_session = DriverManager.initialize_training_session(
+            athlete_name=session.athlete_name, 
+            session_id=session_id
+        )
+        
+        return SessionResponseDTO(
+            session_id=driver_session.session_id,
+            athlete_name=driver_session.athlete_name,
+            status=SessionStatus.ACTIVE,
+            driver_active=driver_session.is_active,
+            created_at=driver_session.created_at,
+            message=f"Driver reiniciado para {session.athlete_name}"
+        )
 
