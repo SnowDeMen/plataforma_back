@@ -1,6 +1,10 @@
 """
 Driver Manager - Gestion centralizada del WebDriver de Selenium.
 Maneja el ciclo de vida del ChromeDriver para las sesiones de entrenamiento.
+
+Configuracion de headless:
+- SELENIUM_HEADLESS=true: Modo headless (produccion, sin GUI)
+- SELENIUM_HEADLESS=false: Modo con GUI (desarrollo, para debugging)
 """
 from typing import Optional, Dict
 from datetime import datetime
@@ -11,6 +15,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from loguru import logger
 
+from app.core.config import settings
 from app.infrastructure.driver.services.auth_service import AuthService
 from app.infrastructure.driver.services.athlete_service import AthleteService
 from app.infrastructure.driver.services.workout_service import WorkoutService
@@ -119,12 +124,22 @@ class DriverManager:
         Crea e inicializa un nuevo WebDriver de Chrome.
         Abre la pagina de TrainingPeaks automaticamente.
         
+        El modo headless se controla via settings.SELENIUM_HEADLESS:
+        - True (default): Modo headless para produccion/servidor
+        - False: Modo con GUI para desarrollo/debugging
+        
         Returns:
             tuple: (WebDriver, WebDriverWait)
         """
         opts = Options()
-        # Modo headless para ejecucion en servidor
-        opts.add_argument("--headless=new")
+        
+        # Modo headless configurable via SELENIUM_HEADLESS
+        if settings.SELENIUM_HEADLESS:
+            opts.add_argument("--headless=new")
+            logger.info("Chrome iniciando en modo headless")
+        else:
+            logger.info("Chrome iniciando con GUI (desarrollo)")
+        
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--disable-gpu")

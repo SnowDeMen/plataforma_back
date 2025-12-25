@@ -1,33 +1,51 @@
 """
-Configuración central de la aplicación.
+Configuracion central de la aplicacion.
 Gestiona variables de entorno y configuraciones globales.
+Soporta configuracion dinamica para desarrollo (ENVIRONMENT=development)
+y produccion (ENVIRONMENT=production).
 """
 import json
 from typing import List
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, computed_field
 
 
 class Settings(BaseSettings):
     """
-    Clase de configuración de la aplicación.
+    Clase de configuracion de la aplicacion.
     Lee variables de entorno y proporciona valores por defecto.
+    
+    Configuracion de desarrollo vs produccion:
+    - ENVIRONMENT: 'development' o 'production'
+    - En desarrollo: SELENIUM_HEADLESS=false para ver el navegador
+    - En produccion: SELENIUM_HEADLESS=true (headless)
+    - DATABASE_URL se puede especificar completa o por componentes
     """
     
-    # Configuración de la aplicación
+    # Configuracion de la aplicacion
     APP_NAME: str = Field(default="Sistema de Agentes AutoGen")
     APP_VERSION: str = Field(default="1.0.0")
     DEBUG: bool = Field(default=False)
     ENVIRONMENT: str = Field(default="production")
     
-    # Configuración del servidor
+    # Configuracion del servidor
     HOST: str = Field(default="0.0.0.0")
     PORT: int = Field(default=8000)
     
-    # Base de datos
-    DATABASE_URL: str = Field(default="sqlite+aiosqlite:///./app.db")
+    # Base de datos - Componentes separados (recomendado para flexibilidad)
+    DATABASE_HOST: str = Field(default="localhost")
+    DATABASE_PORT: int = Field(default=5432)
+    DATABASE_USER: str = Field(default="training_user")
+    DATABASE_PASSWORD: str = Field(default="training_pass")
+    DATABASE_NAME: str = Field(default="training_db")
+    
+    # Base de datos - URL completa (override de componentes si se proporciona)
+    DATABASE_URL: str = Field(default="")
     DB_POOL_SIZE: int = Field(default=5)
     DB_MAX_OVERFLOW: int = Field(default=10)
+    
+    # Selenium - Configurable para desarrollo (ver navegador) vs produccion (headless)
+    SELENIUM_HEADLESS: bool = Field(default=True)
     
     # Seguridad
     SECRET_KEY: str = Field(default="change-this-secret-key-in-production")
@@ -54,8 +72,29 @@ class Settings(BaseSettings):
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = Field(default=60)
     
+    @computed_field
+    @property
+    def effective_database_url(self) -> str:
+        """
+        Retorna la URL de base de datos efectiva.
+        Si DATABASE_URL esta definida, la usa directamente.
+        Si no, construye la URL desde los componentes individuales.
+        """
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
+        return (
+            f"postgresql+asyncpg://{self.DATABASE_USER}:{self.DATABASE_PASSWORD}"
+            f"@{self.DATABASE_HOST}:{self.DATABASE_PORT}/{self.DATABASE_NAME}"
+        )
+    
+    @computed_field
+    @property
+    def is_development(self) -> bool:
+        """Indica si el entorno es de desarrollo."""
+        return self.ENVIRONMENT.lower() == "development"
+    
     class Config:
-        """Configuración de Pydantic."""
+        """Configuracion de Pydantic."""
         env_file = ".env"
         case_sensitive = True
         extra = "ignore"  # Ignorar campos extra del .env

@@ -1,0 +1,58 @@
+# Docker Compose - PostgreSQL para desarrollo local
+# Uso: docker-compose -f docker-compose.dev.yml up -d
+#
+# Este archivo solo levanta PostgreSQL para desarrollo.
+# El backend y frontend se ejecutan localmente (sin Docker).
+
+services:
+  postgres-dev:
+    image: postgres:15-alpine
+    container_name: training-postgres-dev
+    environment:
+      - POSTGRES_USER=training_user
+      - POSTGRES_PASSWORD=training_pass
+      - POSTGRES_DB=training_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+      # Opcional: scripts de inicializacion
+      # - ./plataforma_postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U training_user -d training_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres-dev-data:
+
+# ===========================================
+# INSTRUCCIONES DE USO
+# ===========================================
+#
+# 1. Levantar Postgres:
+#    docker-compose -f docker-compose.dev.yml up -d
+#
+# 2. Verificar que esta corriendo:
+#    docker-compose -f docker-compose.dev.yml ps
+#
+# 3. Ver logs:
+#    docker-compose -f docker-compose.dev.yml logs -f
+#
+# 4. Detener:
+#    docker-compose -f docker-compose.dev.yml down
+#
+# 5. Detener y borrar datos:
+#    docker-compose -f docker-compose.dev.yml down -v
+#
+# CONEXION:
+#   Host: localhost
+#   Puerto: 5432
+#   Usuario: training_user
+#   Password: training_pass
+#   Base de datos: training_db
+#
+# Estos valores coinciden con los defaults en .env.example
+

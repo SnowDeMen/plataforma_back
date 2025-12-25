@@ -1,5 +1,7 @@
 """
-Gestión de sesiones de base de datos.
+Gestion de sesiones de base de datos.
+Usa effective_database_url de settings para soportar configuracion
+por componentes (DATABASE_HOST, etc.) o URL completa (DATABASE_URL).
 """
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import (
@@ -27,7 +29,7 @@ def _create_engine_args() -> dict:
     }
     
     # Configuracion de pool solo para PostgreSQL
-    if "postgresql" in settings.DATABASE_URL:
+    if "postgresql" in settings.effective_database_url:
         args.update({
             "pool_size": settings.DB_POOL_SIZE,
             "max_overflow": settings.DB_MAX_OVERFLOW,
@@ -37,8 +39,8 @@ def _create_engine_args() -> dict:
     return args
 
 
-# Engine de base de datos
-engine = create_async_engine(settings.DATABASE_URL, **_create_engine_args())
+# Engine de base de datos (usa effective_database_url para flexibilidad dev/prod)
+engine = create_async_engine(settings.effective_database_url, **_create_engine_args())
 
 # Session factory
 AsyncSessionLocal = async_sessionmaker(

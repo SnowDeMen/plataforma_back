@@ -38,6 +38,9 @@ ENV/
 .env
 .env.local
 .env.*.local
+# Mantener .env.example en el repositorio
+!.env.example
+!api/.env.example
 
 # IDE
 .vscode/
