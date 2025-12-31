@@ -213,18 +213,39 @@ class PlanRepository:
         Returns:
             True si se actualizo correctamente
         """
+        # Importante: `generation_message` es VARCHAR(255).
+        # Errores de proveedores externos (OpenAI, Selenium, etc.) pueden exceder ese tamaño.
+        # Truncamos de forma segura para no romper la persistencia del estado.
+        safe_message = self._truncate_generation_message(message)
+
         query = (
             update(TrainingPlanModel)
             .where(TrainingPlanModel.id == plan_id)
             .values(
                 generation_progress=progress,
-                generation_message=message,
+                generation_message=safe_message,
                 updated_at=datetime.utcnow()
             )
         )
         
         result = await self.db.execute(query)
         return result.rowcount > 0
+
+    @staticmethod
+    def _truncate_generation_message(message: str, max_len: int = 255) -> str:
+        """
+        Trunca el mensaje de generación para cumplir con la restricción de la columna.
+
+        Mantiene el contenido más útil al inicio y agrega sufijo si se truncó.
+        """
+        if message is None:
+            return ""
+        if len(message) <= max_len:
+            return message
+        suffix = "..."
+        if max_len <= len(suffix):
+            return message[:max_len]
+        return message[: max_len - len(suffix)] + suffix
     
     async def update_plan_data(
         self, 

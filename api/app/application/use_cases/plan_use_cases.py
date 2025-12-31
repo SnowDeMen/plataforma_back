@@ -177,24 +177,57 @@ class PlanUseCases:
         await self.repository.update_progress(plan_id, 0, "Iniciando generacion...")
         await self.db.commit()
         
-        # Funcion para manejar progreso
-        async def handle_progress(progress: int, message: str):
-            await self.repository.update_progress(plan_id, progress, message)
-            await self.db.commit()
-            
-            # Notificar callbacks registrados
+        # La generación puede emitir múltiples callbacks de progreso muy rápido.
+        # En SQLAlchemy AsyncSession NO se permiten operaciones concurrentes sobre la misma sesión,
+        # por lo que serializamos las escrituras/commits con un lock para evitar:
+        # "This session is provisioning a new connection; concurrent operations are not permitted".
+        progress_lock = asyncio.Lock()
+
+        async def handle_progress(progress: int, message: str) -> None:
+            """
+            Persiste progreso en BD de forma segura (sin concurrencia en la sesión)
+            y notifica callbacks (WebSocket/UI) fuera del lock.
+            """
+            try:
+                async with progress_lock:
+                    await self.repository.update_progress(plan_id, progress, message)
+                    await self.db.commit()
+            except Exception as e:
+                # No propagamos: un fallo de progreso no debe tumbar la generación.
+                logger.warning(f"Error persistiendo progreso del plan {plan_id}: {e}")
+                return
+
+            # Notificar callbacks registrados (WebSocket)
             self._notify_progress(plan_id, progress, message)
-            
+
             # Llamar callback local si existe
             if on_progress:
-                on_progress(progress, message)
+                try:
+                    on_progress(progress, message)
+                except Exception as e:
+                    logger.warning(f"Error en callback local de progreso (plan {plan_id}): {e}")
+
+        def schedule_progress_update(progress: int, message: str) -> None:
+            """
+            Programa la actualización de progreso como task y captura excepciones
+            para evitar 'Task exception was never retrieved'.
+            """
+            task = asyncio.create_task(handle_progress(progress, message))
+
+            def _swallow_task_exception(t: asyncio.Task) -> None:
+                try:
+                    t.result()
+                except Exception as e:
+                    logger.warning(f"Task de progreso falló (plan {plan_id}): {e}")
+
+            task.add_done_callback(_swallow_task_exception)
         
         try:
             # Generar plan
             plan_data = await self.generator.generate(
                 athlete_context=plan.athlete_context or {},
                 start_date=plan.start_date,
-                on_progress=lambda p, m: asyncio.create_task(handle_progress(p, m))
+                on_progress=schedule_progress_update
             )
             
             # Calcular totales
@@ -230,7 +263,12 @@ class PlanUseCases:
         except Exception as e:
             logger.error(f"Error generando plan {plan_id}: {e}")
             await self.repository.update_status(plan_id, "pending")
-            await self.repository.update_progress(plan_id, 0, f"Error: {str(e)}")
+            error_text = str(e)
+            # Mensaje corto y humano para errores típicos de OpenAI por cuota/billing.
+            # Esto evita ensuciar el estado con texto enorme y facilita el diagnóstico.
+            if "insufficient_quota" in error_text or "Error code: 429" in error_text:
+                error_text = "Error OpenAI: cuota insuficiente (429). Revisa billing/cuota de la API key."
+            await self.repository.update_progress(plan_id, 0, f"Error: {error_text}")
             await self.db.commit()
             raise
     
