@@ -4,7 +4,8 @@ Script para inicializar la base de datos.
 import asyncio
 from loguru import logger
 
-from app.infrastructure.database.session import init_db
+from sqlalchemy import text
+from app.infrastructure.database.session import init_db, engine
 
 
 async def main():
@@ -12,6 +13,10 @@ async def main():
     logger.info("Inicializando base de datos...")
     
     try:
+        # Asegurar que el esquema 'airtable' exista antes de crear tablas
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS airtable"))
+            
         await init_db()
         logger.success("Base de datos inicializada correctamente")
     except Exception as e:
