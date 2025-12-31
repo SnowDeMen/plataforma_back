@@ -15,6 +15,8 @@ services:
       - TP_EMAIL=${TP_EMAIL}
       - TP_PASSWORD=${TP_PASSWORD}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # Permite controlar el modelo sin rebuild. Si no se define, usa el default del backend.
+      - AUTOGEN_MODEL=${AUTOGEN_MODEL:-}
       - CORS_ORIGINS=*
     volumes:
       - backend-logs:/app/logs

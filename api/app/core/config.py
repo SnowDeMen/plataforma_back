@@ -57,7 +57,9 @@ class Settings(BaseSettings):
     
     # AutoGen / LLM
     OPENAI_API_KEY: str = Field(default="")
-    AUTOGEN_MODEL: str = Field(default="gpt-5-mini")
+    # Modelo default "seguro": se puede sobreescribir por variable de entorno AUTOGEN_MODEL.
+    # Nota: si se usa un modelo no disponible en la cuenta, OpenAI puede responder 404/400.
+    AUTOGEN_MODEL: str = Field(default="gpt-4o-mini")
     AUTOGEN_TEMPERATURE: float = Field(default=0.7)
     AUTOGEN_MAX_TOKENS: int = Field(default=128000)
     

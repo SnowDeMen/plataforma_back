@@ -4,6 +4,7 @@ Maneja la generacion, consulta y aprobacion de planes de 4 semanas.
 """
 from typing import List, Optional
 from datetime import date
+import asyncio
 
 from fastapi import APIRouter, Depends, status, BackgroundTasks, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,25 +62,31 @@ async def generate_plan(
     # Crear plan en BD
     plan = await use_cases.create_plan(dto)
     
-    # Generar contenido en background
-    async def generate_in_background(plan_id: int):
-        """Tarea de generacion en background."""
-        # Crear nueva sesion de BD para el background task
+    # Generar contenido en background.
+    #
+    # Nota importante:
+    # FastAPI/Starlette pueden ejecutar BackgroundTasks en un contexto sin event loop (threadpool)
+    # cuando la tarea es síncrona. Para evitar que una coroutine "se pierda" y el plan se quede
+    # permanentemente en "generating", envolvemos la ejecución async dentro de un wrapper sync
+    # usando asyncio.run (seguro en threadpool) y dejamos que PlanUseCases gestione el estado en BD.
+    async def _generate_in_background(plan_id: int) -> None:
+        """Tarea async de generación con su propia sesión de BD."""
         from app.infrastructure.database.session import AsyncSessionLocal
-        
+        from loguru import logger
+
         async with AsyncSessionLocal() as db:
             try:
                 bg_use_cases = PlanUseCases(db)
                 await bg_use_cases.generate_plan(plan_id)
             except Exception as e:
-                from loguru import logger
-                logger.error(f"Error en generacion background: {e}")
-    
-    # Agregar tarea al background
-    background_tasks.add_task(generate_in_background, plan.id)
-    
-    # Actualizar estado a generating antes de retornar
-    plan.status = "generating"
+                # PlanUseCases.generate_plan ya intenta persistir estado/progreso de error en BD.
+                logger.error(f"Error en generacion background (plan_id={plan_id}): {e}")
+
+    def _generate_in_background_sync(plan_id: int) -> None:
+        """Wrapper sync para ejecutar la tarea async desde BackgroundTasks."""
+        asyncio.run(_generate_in_background(plan_id))
+
+    background_tasks.add_task(_generate_in_background_sync, plan.id)
     
     return plan
 
