@@ -113,7 +113,7 @@ class AirtableClient:
             params: dict[str, Any] = {
                 "pageSize": page_size,
                 "filterByFormula": filter_formula,
-                "sort": sort,
+                # "sort": sort,  <-- REMOVE THIS to avoid bad serialization by requests
             }
             if offset:
                 params["offset"] = offset
@@ -124,6 +124,12 @@ class AirtableClient:
 
             # Construimos query para fields[] sin perder params principales.
             query: list[tuple[str, Any]] = list(params.items())
+            
+            # Manual serialization for 'sort' to avoid "sort=field&sort=direction"
+            for i, s in enumerate(sort):
+                query.append((f"sort[{i}][field]", s["field"]))
+                query.append((f"sort[{i}][direction]", s["direction"]))
+
             if fields:
                 for f in fields:
                     query.append(("fields[]", f))
