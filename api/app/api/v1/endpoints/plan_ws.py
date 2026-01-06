@@ -218,8 +218,15 @@ async def plan_progress_websocket(
             asyncio.create_task(
                 manager.send_progress(plan_id, progress, message)
             )
+
+        def complete_callback(success: bool, message: str):
+            """Callback que se llama cuando la generación termina (éxito o error)."""
+            asyncio.create_task(
+                manager.send_complete(plan_id, success=success, message=message)
+            )
         
         PlanUseCases.register_progress_callback(plan_id, progress_callback)
+        PlanUseCases.register_complete_callback(plan_id, complete_callback)
         
         try:
             # Mantener conexion abierta
@@ -250,6 +257,7 @@ async def plan_progress_websocket(
                         
         finally:
             PlanUseCases.unregister_progress_callback(plan_id, progress_callback)
+            PlanUseCases.unregister_complete_callback(plan_id, complete_callback)
             
     except WebSocketDisconnect:
         logger.debug(f"Cliente desconectado del plan {plan_id}")

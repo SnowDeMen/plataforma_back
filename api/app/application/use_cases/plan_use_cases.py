@@ -40,6 +40,8 @@ class PlanUseCases:
     
     # Almacenamiento temporal de callbacks de progreso por plan_id
     _progress_callbacks: Dict[int, List[Callable[[int, str], None]]] = {}
+    # Callbacks de completado por plan_id: (success, message)
+    _complete_callbacks: Dict[int, List[Callable[[bool, str], None]]] = {}
     
     def __init__(self, db: AsyncSession):
         """
@@ -87,6 +89,42 @@ class PlanUseCases:
                 cls._progress_callbacks[plan_id].remove(callback)
             except ValueError:
                 pass
+
+    @classmethod
+    def register_complete_callback(
+        cls,
+        plan_id: int,
+        callback: Callable[[bool, str], None]
+    ) -> None:
+        """
+        Registra un callback para recibir notificación de completado.
+
+        Args:
+            plan_id: ID del plan
+            callback: Función que recibe (success, message)
+        """
+        if plan_id not in cls._complete_callbacks:
+            cls._complete_callbacks[plan_id] = []
+        cls._complete_callbacks[plan_id].append(callback)
+
+    @classmethod
+    def unregister_complete_callback(
+        cls,
+        plan_id: int,
+        callback: Callable[[bool, str], None]
+    ) -> None:
+        """
+        Elimina un callback de completado.
+
+        Args:
+            plan_id: ID del plan
+            callback: Callback a eliminar
+        """
+        if plan_id in cls._complete_callbacks:
+            try:
+                cls._complete_callbacks[plan_id].remove(callback)
+            except ValueError:
+                pass
     
     @classmethod
     def _notify_progress(cls, plan_id: int, progress: int, message: str) -> None:
@@ -104,6 +142,23 @@ class PlanUseCases:
                 callback(progress, message)
             except Exception as e:
                 logger.warning(f"Error en callback de progreso: {e}")
+
+    @classmethod
+    def _notify_complete(cls, plan_id: int, success: bool, message: str) -> None:
+        """
+        Notifica a todos los callbacks registrados de completado.
+
+        Args:
+            plan_id: ID del plan
+            success: Si la generación fue exitosa
+            message: Mensaje final
+        """
+        callbacks = cls._complete_callbacks.get(plan_id, [])
+        for callback in callbacks:
+            try:
+                callback(success, message)
+            except Exception as e:
+                logger.warning(f"Error en callback de completado: {e}")
     
     async def create_plan(
         self,
@@ -247,8 +302,12 @@ class PlanUseCases:
             # Actualizar plan con datos generados
             await self.repository.update_plan_data(plan_id, plan_data, summary)
             await self.repository.update_status(plan_id, "review")
-            await self.repository.update_progress(plan_id, 100, "Plan generado exitosamente")
+            final_message = "Plan generado exitosamente"
+            await self.repository.update_progress(plan_id, 100, final_message)
             await self.db.commit()
+
+            # Notificar completado (WebSocket/UI)
+            self._notify_complete(plan_id, True, final_message)
             
             # Refrescar plan
             plan = await self.repository.get_by_id(plan_id)
@@ -268,8 +327,12 @@ class PlanUseCases:
             # Esto evita ensuciar el estado con texto enorme y facilita el diagnóstico.
             if "insufficient_quota" in error_text or "Error code: 429" in error_text:
                 error_text = "Error OpenAI: cuota insuficiente (429). Revisa billing/cuota de la API key."
-            await self.repository.update_progress(plan_id, 0, f"Error: {error_text}")
+            final_error_message = f"Error: {error_text}"
+            await self.repository.update_progress(plan_id, 0, final_error_message)
             await self.db.commit()
+
+            # Notificar completado como fallo (WebSocket/UI)
+            self._notify_complete(plan_id, False, final_error_message)
             raise
     
     async def create_and_generate(
