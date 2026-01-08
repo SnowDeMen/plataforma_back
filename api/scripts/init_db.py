@@ -4,6 +4,8 @@ Script para inicializar la base de datos.
 import asyncio
 from loguru import logger
 
+# Importar modulos de database para registrar modelos con Base
+from app.infrastructure import database  # noqa: F401
 from app.infrastructure.database.session import init_db
 
 

@@ -11,6 +11,9 @@ autogen-ext[openai]>=0.4.0
 # OpenAI API client
 openai>=1.0.0
 
+# MCP (TrainingPeaks tools) - requerido por plataforma_back/mcp (importa "mcp.server.fastmcp")
+fastmcp>=0.2.0
+
 # Base de datos
 sqlalchemy>=2.0.23
 alembic>=1.12.1

@@ -51,13 +51,21 @@ class Settings(BaseSettings):
     SECRET_KEY: str = Field(default="change-this-secret-key-in-production")
     ALGORITHM: str = Field(default="HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=30)
+
+    # Auth (login único)
+    # Nota: enforcement es a nivel UI (frontend). El backend expone un endpoint
+    # de validación de credenciales y NO protege el resto de la API.
+    AUTH_USERNAME: str = Field(default="")
+    AUTH_PASSWORD: str = Field(default="")
     
     # CORS (acepta lista JSON o "*" para todos los origenes)
     CORS_ORIGINS: str = Field(default="*")
     
     # AutoGen / LLM
     OPENAI_API_KEY: str = Field(default="")
-    AUTOGEN_MODEL: str = Field(default="gpt-5-mini")
+    # Modelo default "seguro": se puede sobreescribir por variable de entorno AUTOGEN_MODEL.
+    # Nota: si se usa un modelo no disponible en la cuenta, OpenAI puede responder 404/400.
+    AUTOGEN_MODEL: str = Field(default="gpt-4o-mini")
     AUTOGEN_TEMPERATURE: float = Field(default=0.7)
     AUTOGEN_MAX_TOKENS: int = Field(default=128000)
     
@@ -92,6 +100,12 @@ class Settings(BaseSettings):
     def is_development(self) -> bool:
         """Indica si el entorno es de desarrollo."""
         return self.ENVIRONMENT.lower() == "development"
+
+    @computed_field
+    @property
+    def is_auth_configured(self) -> bool:
+        """Indica si hay credenciales configuradas para el login único."""
+        return bool(self.AUTH_USERNAME and self.AUTH_PASSWORD)
     
     class Config:
         """Configuracion de Pydantic."""
