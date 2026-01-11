@@ -1,6 +1,15 @@
 import asyncio
+import sys
+import os
+
+# Ajustar path para importar app
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from sqlalchemy import text
-from app.infrastructure.database.session import engine
+from app.infrastructure.database.session import engine, init_db
+# Importar modelos para que se registren en Base
+from app.infrastructure.database.models import Base
+
 
 async def add_column():
     async with engine.begin() as conn:
