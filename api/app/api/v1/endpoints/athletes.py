@@ -187,4 +187,3 @@ async def seed_athletes(
     TrainingPeaks o archivos CSV.
     """
     return await use_cases.seed_athletes(athletes_data)
-

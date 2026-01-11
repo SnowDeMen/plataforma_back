@@ -54,6 +54,7 @@ class ChatHistoryDTO(BaseModel):
     """DTO para el historial completo de una sesion de chat."""
     
     session_id: str = Field(..., description="ID de la sesion")
+    athlete_id: Optional[str] = Field(None, description="ID del atleta")
     athlete_name: str = Field(..., description="Nombre del atleta")
     messages: List[ChatMessageDTO] = Field(
         default_factory=list, 
@@ -71,6 +72,7 @@ class ChatSessionInfoDTO(BaseModel):
     """DTO con informacion resumida de una sesion de chat."""
     
     session_id: str = Field(..., description="ID de la sesion")
+    athlete_id: Optional[str] = Field(None, description="ID del atleta")
     athlete_name: str = Field(..., description="Nombre del atleta")
     message_count: int = Field(..., description="Cantidad de mensajes")
     is_active: bool = Field(..., description="Estado activo de la sesion")

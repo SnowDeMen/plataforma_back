@@ -255,6 +255,7 @@ class ChatUseCases:
         result = ChatHistoryDTO(
             session_id=session_id,
             athlete_name=chat_session.athlete_name,
+            athlete_id=chat_session.athlete_id,
             messages=messages,
             is_active=chat_session.is_active,
             created_at=chat_session.created_at,
@@ -295,6 +296,7 @@ class ChatUseCases:
         return ChatSessionInfoDTO(
             session_id=session_id,
             athlete_name=chat_session.athlete_name,
+            athlete_id=chat_session.athlete_id,
             message_count=len(messages),
             is_active=DriverManager.is_session_active(session_id),
             last_message=last_message,
@@ -415,6 +417,7 @@ class ChatUseCases:
     async def get_athlete_sessions(
         self, 
         athlete_name: str, 
+        athlete_id: Optional[str] = None,
         active_only: bool = True
     ) -> List[ChatSessionInfoDTO]:
         """
@@ -429,7 +432,11 @@ class ChatUseCases:
         Returns:
             Lista de ChatSessionInfoDTO
         """
-        sessions = await self.repository.get_by_athlete(athlete_name, active_only)
+        sessions = await self.repository.get_by_athlete(
+            athlete_name=athlete_name, 
+            athlete_id=athlete_id,
+            active_only=active_only
+        )
         
         result = []
         for session in sessions:
@@ -444,6 +451,7 @@ class ChatUseCases:
             result.append(ChatSessionInfoDTO(
                 session_id=session.session_id,
                 athlete_name=session.athlete_name,
+                athlete_id=session.athlete_id,
                 message_count=len(messages),
                 is_active=DriverManager.is_session_active(session.session_id),
                 last_message=last_message,

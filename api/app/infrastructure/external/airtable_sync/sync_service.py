@@ -57,7 +57,7 @@ def map_airtable_record_to_row(
     - Cada FieldMapping decide cómo mapear y transformar el valor
     """
     row: dict[str, Any] = {
-        "airtable_record_id": record.record_id,
+        config.record_id_column: record.record_id,
         "airtable_last_modified": ensure_utc(record.last_modified),
         "synced_at": ensure_utc(synced_at),
         "is_deleted": False,  # si el registro existe en Airtable, no está borrado
@@ -192,6 +192,7 @@ class AirtableToPostgresSync:
                     target_schema=config.target_schema,
                     target_table=config.target_table,
                     rows=batch,
+                    conflict_pk=config.record_id_column,
                 )
                 batch.clear()
 
@@ -201,6 +202,7 @@ class AirtableToPostgresSync:
                 target_schema=config.target_schema,
                 target_table=config.target_table,
                 rows=batch,
+                conflict_pk=config.record_id_column,
             )
             batch.clear()
 

@@ -54,7 +54,7 @@ async def start_session(
         400: Si el atleta no es valido
     """
     # 1. Iniciar sesion de entrenamiento (driver)
-    session_response = use_cases.start_session(dto)
+    session_response = await use_cases.start_session(dto)
     
     # Crear logger de sesion para auditoria
     AuditLogger.get_session_logger(
@@ -121,6 +121,7 @@ async def start_session(
     await chat_repo.create(
         session_id=session_response.session_id,
         athlete_name=session_response.athlete_name,
+        athlete_id=session_response.athlete_id,
         system_message=None,  # Usara el default del ChatManager
         agent_config={"mcp_enabled": mcp_initialized}
     )

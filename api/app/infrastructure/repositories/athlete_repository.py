@@ -80,25 +80,16 @@ class AthleteRepository:
         Crea un nuevo atleta en la base de datos.
         
         Args:
-            athlete_data: Diccionario con los datos del atleta
+            athlete_data: Diccionario con los datos del atleta (flat)
             
         Returns:
             AthleteModel creado
         """
-        athlete = AthleteModel(
-            id=athlete_data["id"],
-            name=athlete_data["name"],
-            age=athlete_data.get("age"),
-            discipline=athlete_data.get("discipline"),
-            level=athlete_data.get("level"),
-            goal=athlete_data.get("goal"),
-            status=athlete_data.get("status", "Por generar"),
-            experience=athlete_data.get("experience"),
-            personal=athlete_data.get("personal"),
-            medica=athlete_data.get("medica"),
-            deportiva=athlete_data.get("deportiva"),
-            performance=athlete_data.get("performance")
-        )
+        # Asegurar status por defecto
+        if "status" not in athlete_data:
+            athlete_data["status"] = "Por generar"
+            
+        athlete = AthleteModel(**athlete_data)
         
         self.db.add(athlete)
         await self.db.flush()
@@ -285,3 +276,26 @@ class AthleteRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none() is not None
 
+    async def get_by_name(self, name: str) -> Optional[AthleteModel]:
+        """
+        Obtiene un atleta por su nombre (case insensitive).
+        Busca coincidencia exacta en 'name' o 'full_name' ignorando mayúsculas.
+        
+        Args:
+            name: Nombre del atleta
+            
+        Returns:
+            AthleteModel o None
+        """
+        from sqlalchemy import func
+        
+        name_lower = name.strip().lower()
+        
+        # Buscar por name o full_name case-insensitive
+        query = select(AthleteModel).where(
+            (func.lower(AthleteModel.name) == name_lower) | 
+            (func.lower(AthleteModel.full_name) == name_lower)
+        ).limit(1)
+        
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()

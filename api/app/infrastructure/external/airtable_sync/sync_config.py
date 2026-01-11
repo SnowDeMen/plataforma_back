@@ -36,6 +36,7 @@ class TableSyncConfig:
     target_table: str
     field_mappings: list[FieldMapping]
     external_id_column: Optional[str] = None
+    record_id_column: str = "airtable_record_id"
 
 
 def example_table_config_from_env() -> TableSyncConfig:

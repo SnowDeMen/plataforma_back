@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     # Nota: si se usa un modelo no disponible en la cuenta, OpenAI puede responder 404/400.
     AUTOGEN_MODEL: str = Field(default="gpt-4o-mini")
     AUTOGEN_TEMPERATURE: float = Field(default=0.7)
-    AUTOGEN_MAX_TOKENS: int = Field(default=128000)
+    AUTOGEN_MAX_TOKENS: int = Field(default=16000)
     
     # Workouts
     WORKOUTS_DIR: str = Field(default="workouts")

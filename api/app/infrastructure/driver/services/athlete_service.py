@@ -213,16 +213,65 @@ class AthleteService:
         tile.click()
         logger.info(f"Atleta '{name}' seleccionado")
     
-    def select_athlete(self, name: str, timeout: int = 10) -> None:
+    def select_athlete(self, name: str, timeout: int = 5) -> None:
         """
-        Realiza el flujo completo de seleccion de un atleta.
+        Realiza el flujo completo de seleccion de un atleta con estrategia de reintentos.
+        Intenta varias combinaciones de nombre si la busqueda exacta falla.
+        
+        Order of attempts:
+        1. Full exact name
+        2. First Name + First Last Name
+        3. First Name + Last Last Name (if different)
+        4. First Name only
         
         Args:
-            name: Nombre exacto del atleta
-            timeout: Segundos de espera maxima
+            name: Nombre del atleta
+            timeout: Segundos de espera por intento
+            
+        Raises:
+             AthleteNotFoundInTPException: Si no se encuentra despues de todos los intentos
         """
+        from app.shared.exceptions.domain import AthleteNotFoundInTPException
+        
         self.click_athlete_library()
         self.expand_all_athlete_libraries()
-        self.click_athlete_by_name(name)
-        logger.info(f"Flujo de seleccion completado para atleta: {name}")
+        
+        # Generate variations
+        variations = [name]
+        parts = name.split()
+        
+        if len(parts) > 2:
+            # First + First Last (e.g., "Abiezer Davila" from "Abiezer Davila Rivera")
+            v2 = f"{parts[0]} {parts[1]}"
+            if v2 not in variations:
+                variations.append(v2)
+                
+            # First + Last Last (e.g., "Abiezer Rivera")
+            v3 = f"{parts[0]} {parts[-1]}"
+            if v3 not in variations:
+                variations.append(v3)
+        
+        if len(parts) > 1:
+            # First Name only
+            v4 = parts[0]
+            if v4 not in variations:
+                variations.append(v4)
+                
+            # Last Name only (common in some lists if sorted by last name? No, risky. Let's stick to first name)
+            
+        logger.info(f"Intentando seleccionar atleta '{name}' con variaciones: {variations}")
+        
+        for variation in variations:
+            try:
+                logger.debug(f"Buscando atleta: '{variation}'")
+                self.click_athlete_by_name(variation, timeout=timeout)
+                logger.info(f"Atleta encontrado y seleccionado como: '{variation}'")
+                return
+            except TimeoutException:
+                logger.warning(f"No se encontro atleta con nombre: '{variation}'")
+                continue
+                
+        # If we get here, all attempts failed
+        logger.error(f"Fallo la seleccion de atleta para: {name}. Intentos: {variations}")
+        raise AthleteNotFoundInTPException(name, variations)
 

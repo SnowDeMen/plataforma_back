@@ -1,11 +1,38 @@
 """
-DTOs para operaciones con atletas.
-
-Define las estructuras de datos para transferencia entre capas
-de la aplicacion relacionadas con la gestion de atletas.
+DTOs relacionados con atletas.
+Definen la estructura de datos para transferir informacion de atletas.
+Incluye DTOs para sincronizacion con Airtable y para gestion interna de planes.
 """
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
+
+
+class AirtableAthleteDTO(BaseModel):
+    """
+    DTO para representar un atleta sincronizado de Airtable (perfil completo).
+    Mapea la estructura plana de la tabla 'airtable.athletes'.
+    """
+    id: str = Field(..., description="ID del registro de Airtable")
+    airtable_id: Optional[str] = Field(None, description="ID del registro de Airtable (redundante)")
+    name: str = Field(..., description="Nombre completo del atleta")
+    email: Optional[str] = Field(None, description="Email del atleta")
+    status: str = Field(..., description="Estado del atleta (Plan activo, etc)")
+    
+    # Campos principales
+    discipline: Optional[str] = None
+    level: Optional[str] = None
+    goal: Optional[str] = None
+    age: Optional[int] = None
+    experience: Optional[str] = None
+    
+    # Estructuras complejas (JSON)
+    personal: Optional[Dict[str, Any]] = None
+    medica: Optional[Dict[str, Any]] = None
+    deportiva: Optional[Dict[str, Any]] = None
+    performance: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
 
 
 class RecordsDTO(BaseModel):
@@ -39,7 +66,10 @@ class PersonalInfoDTO(BaseModel):
 class MedicaInfoDTO(BaseModel):
     """DTO para informacion medica del atleta."""
     enfermedades: Optional[str] = None
-    adicciones: Optional[str] = None
+    lesionAguda: Optional[str] = None
+    tipoLesion: Optional[str] = None
+    fuma: Optional[str] = None
+    alcohol: Optional[str] = None
     horasSueno: Optional[int] = None
     calidadSueno: Optional[str] = None
     dieta: Optional[str] = None
@@ -107,9 +137,10 @@ class PerformanceSummaryDTO(BaseModel):
 
 
 class AthleteDTO(BaseModel):
-    """DTO completo para un atleta."""
+    """DTO completo para un atleta (Dominio/Plan)."""
     id: str
     name: str
+    last_name: Optional[str] = None
     age: Optional[int] = None
     discipline: Optional[str] = None
     level: Optional[str] = None
@@ -129,6 +160,7 @@ class AthleteListItemDTO(BaseModel):
     """DTO resumido para listas de atletas."""
     id: str
     name: str
+    last_name: Optional[str] = None
     age: Optional[int] = None
     discipline: Optional[str] = None
     level: Optional[str] = None
@@ -186,4 +218,3 @@ class AthleteCreateDTO(BaseModel):
     
     class Config:
         from_attributes = True
-
