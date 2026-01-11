@@ -128,6 +128,20 @@ class AthleteUseCases:
         except (ValueError, ZeroDivisionError):
             return None
 
+    def _clean_airtable_value(self, value: Optional[str]) -> Optional[str]:
+        """Limpia valores que vienen de Airtable como listados serializados [\"Valor\"] o {Valor}."""
+        if not value:
+            return None
+        # Quitar corchetes, llaves, comillas y espacios si parece una lista de un elemento
+        cleaned = value.strip()
+        if cleaned.startswith('[') and cleaned.endswith(']'):
+            cleaned = cleaned[1:-1].strip()
+        if cleaned.startswith('{') and cleaned.endswith('}'):
+            cleaned = cleaned[1:-1].strip()
+        if (cleaned.startswith('"') and cleaned.endswith('"')) or (cleaned.startswith("'") and cleaned.endswith("'")):
+            cleaned = cleaned[1:-1].strip()
+        return cleaned
+
     async def get_athlete(self, athlete_id: str) -> AthleteDTO:
         """
         Obtiene el detalle completo de un atleta.
@@ -175,9 +189,12 @@ class AthleteUseCases:
             ),
             medica=MedicaInfoDTO(
                 enfermedades=athlete.diseases_conditions,
-                adicciones=f"{athlete.smoker or ''} {athlete.alcohol_consumption or ''}".strip(),
+                lesionAguda=athlete.acute_injury_disease,
+                tipoLesion=athlete.acute_injury_type,
+                fuma=self._clean_airtable_value(athlete.smoker),
+                alcohol=self._clean_airtable_value(athlete.alcohol_consumption),
                 horasSueno=int(athlete.daily_sleep_hours) if athlete.daily_sleep_hours and athlete.daily_sleep_hours.isdigit() else None,
-                calidadSueno=athlete.sleep_quality,
+                calidadSueno=self._clean_airtable_value(athlete.sleep_quality),
                 dieta=athlete.diet_type
             ),
             deportiva=DeportivaInfoDTO(

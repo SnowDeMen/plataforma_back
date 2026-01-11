@@ -113,6 +113,7 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="Dieta", pg_column="diet_type"),
                 FieldMapping(airtable_field="Cuentame un poco sobre tu dieta", pg_column="diet_description"),
                 FieldMapping(airtable_field="Tipo de atleta", pg_column="athlete_type"),
+                FieldMapping(airtable_field="Tipo de atleta", pg_column="level"),
                 FieldMapping(
                     airtable_field="¿Cuántas disciplinas vas a practicar?", 
                     pg_column="discipline",

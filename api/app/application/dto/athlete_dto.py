@@ -66,7 +66,10 @@ class PersonalInfoDTO(BaseModel):
 class MedicaInfoDTO(BaseModel):
     """DTO para informacion medica del atleta."""
     enfermedades: Optional[str] = None
-    adicciones: Optional[str] = None
+    lesionAguda: Optional[str] = None
+    tipoLesion: Optional[str] = None
+    fuma: Optional[str] = None
+    alcohol: Optional[str] = None
     horasSueno: Optional[int] = None
     calidadSueno: Optional[str] = None
     dieta: Optional[str] = None
