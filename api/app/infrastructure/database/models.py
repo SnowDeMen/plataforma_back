@@ -2,7 +2,7 @@
 Modelos de base de datos (ORM).
 """
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, Text, Enum as SQLEnum, JSON, Boolean
+from sqlalchemy import Column, String, Integer, DateTime, Date, Text, Enum as SQLEnum, JSON, Boolean
 from sqlalchemy.sql import func
 
 from app.infrastructure.database.session import Base
@@ -90,7 +90,7 @@ class TrainingModel(Base):
 
 
 
-class AthleteModel(Base):
+class AirtableAthleteModel(Base):
     """
     Modelo mapeado a la tabla sincronizada desde Airtable.
     Schema: airtable
@@ -144,6 +144,7 @@ class AthleteModel(Base):
     long_term_goal = Column(String)
     best_time_5k = Column(String)
     best_time_10k = Column(String)
+    best_time_10k = Column(String)
     best_time_21k = Column(String)
     marathon_time = Column(String)
     triathlon_distance = Column(String)
@@ -184,7 +185,7 @@ class AthleteModel(Base):
     status = Column(String)
 
     def __repr__(self):
-        return f"<Athlete(id={self.airtable_record_id}, name={self.full_name})>"
+        return f"<AirtableAthlete(id={self.airtable_record_id}, name={self.full_name})>"
 
 
 class SyncStateModel(Base):
@@ -199,7 +200,7 @@ class SyncStateModel(Base):
     target_schema = Column(String, primary_key=True)
     target_table = Column(String, primary_key=True)
 
-    cursor_last_modified = Column(DateTime(timezone=True), nullable=False, default=datetime(1970, 1, 1, tzinfo=None)) # Default handled by DB usually, but safe to set
+    cursor_last_modified = Column(DateTime(timezone=True), nullable=False, default=datetime(1970, 1, 1, tzinfo=None))
     
     last_run_started_at = Column(DateTime(timezone=True), nullable=True)
     last_run_completed_at = Column(DateTime(timezone=True), nullable=True)
@@ -210,4 +211,92 @@ class SyncStateModel(Base):
 
     def __repr__(self):
         return f"<SyncState({self.source_table} -> {self.target_table}, status={self.last_run_status})>"
+
+
+class AthleteModel(Base):
+    """
+    Modelo de base de datos para atletas.
+    
+    Almacena informacion completa del atleta incluyendo datos
+    personales, medicos, deportivos y de performance.
+    
+    Estados posibles:
+    - Por generar: Pendiente de generar plan
+    - Por revisar: Plan en espera de validacion
+    - Plan activo: Atleta con plan activo
+    """
+    
+    __tablename__ = "athletes"
+    
+    id = Column(String(255), primary_key=True)
+    name = Column(String(255), nullable=False, index=True)
+    age = Column(Integer, nullable=True)
+    discipline = Column(String(100), nullable=True)
+    level = Column(String(100), nullable=True)
+    goal = Column(String(255), nullable=True)
+    status = Column(String(50), default="Por generar", index=True)
+    experience = Column(String(255), nullable=True)
+    
+    # Datos estructurados en JSON
+    personal = Column(JSON, nullable=True)    # genero, bmi, sesionesSemanales, etc.
+    medica = Column(JSON, nullable=True)      # enfermedades, horasSueno, etc.
+    deportiva = Column(JSON, nullable=True)   # eventoObjetivo, records, etc.
+    performance = Column(JSON, nullable=True) # historial de workouts
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<Athlete(id={self.id}, name={self.name}, status={self.status})>"
+
+
+class TrainingPlanModel(Base):
+    """
+    Modelo de base de datos para planes de entrenamiento de 4 semanas.
+    
+    Almacena planes generados asincronamente para atletas.
+    El plan se genera como texto estructurado y puede aplicarse
+    posteriormente a TrainingPeaks.
+    
+    Estados posibles:
+    - pending: Pendiente de generar
+    - generating: En proceso de generacion
+    - review: Esperando aprobacion del coach
+    - active: Plan aprobado y activo
+    - applied: Aplicado a TrainingPeaks
+    - rejected: Rechazado por el coach
+    """
+    
+    __tablename__ = "training_plans"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    athlete_id = Column(String(255), nullable=False, index=True)
+    athlete_name = Column(String(255), nullable=False, index=True)
+    status = Column(String(50), default="pending", index=True)
+    
+    # Contexto usado para generar el plan
+    athlete_context = Column(JSON, nullable=True)
+    generation_prompt = Column(Text, nullable=True)
+    
+    # Plan generado (4 semanas de workouts)
+    plan_data = Column(JSON, nullable=True)
+    plan_summary = Column(Text, nullable=True)
+    
+    # Configuracion del plan
+    weeks = Column(Integer, default=4)
+    start_date = Column(Date, nullable=True)
+    end_date = Column(Date, nullable=True)
+    
+    # Progreso de generacion (para WebSocket)
+    generation_progress = Column(Integer, default=0)
+    generation_message = Column(String(255), nullable=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    applied_at = Column(DateTime(timezone=True), nullable=True)
+    
+    def __repr__(self):
+        return f"<TrainingPlan(id={self.id}, athlete={self.athlete_name}, status={self.status})>"
 

@@ -5,6 +5,7 @@ import asyncio
 from loguru import logger
 
 from sqlalchemy import text
+from app.infrastructure import database
 from app.infrastructure.database.session import init_db, engine
 
 

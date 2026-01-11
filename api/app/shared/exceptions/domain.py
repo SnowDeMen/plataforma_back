@@ -76,3 +76,15 @@ class SessionNotFoundException(DomainException):
             details={"session_id": session_id}
         )
         self.status_code = 404
+
+
+class PlanNotFoundException(DomainException):
+    """Excepcion cuando no se encuentra un plan de entrenamiento."""
+    
+    def __init__(self, plan_id: int):
+        super().__init__(
+            message=f"Plan con ID '{plan_id}' no encontrado",
+            error_code="PLAN_NOT_FOUND",
+            details={"plan_id": plan_id}
+        )
+        self.status_code = 404

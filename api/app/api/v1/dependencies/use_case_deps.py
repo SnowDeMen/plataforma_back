@@ -5,13 +5,16 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.use_cases.agent_use_cases import AgentUseCases
+from app.application.use_cases.auth_use_cases import AuthUseCases
 from app.application.use_cases.session_use_cases import SessionUseCases
 from app.application.use_cases.chat_use_cases import ChatUseCases
 from app.application.use_cases.athlete_use_cases import AthleteUseCases
 from app.domain.repositories.agent_repository import IAgentRepository
 from app.infrastructure.repositories.athlete_repository import AthleteRepository
 from app.api.v1.dependencies.repository_deps import get_agent_repository
+from app.core.config import settings
 from app.infrastructure.database.session import get_db
+from app.infrastructure.security.single_user_auth_service import SingleUserAuthService
 
 
 async def get_agent_use_cases(
@@ -56,7 +59,7 @@ async def get_chat_use_cases(
     return ChatUseCases(db)
 
 
-def get_athlete_use_cases(
+async def get_athlete_use_cases(
     db: AsyncSession = Depends(get_db)
 ) -> AthleteUseCases:
     """
@@ -68,7 +71,15 @@ def get_athlete_use_cases(
     Returns:
         AthleteUseCases: Instancia de casos de uso de atletas
     """
-    repository = AthleteRepository(db)
-    return AthleteUseCases(repository)
+    return AthleteUseCases(db)
 
 
+def get_auth_use_cases() -> AuthUseCases:
+    """
+    Dependencia para obtener los casos de uso de autenticación (login único).
+    """
+    auth_service = SingleUserAuthService(
+        expected_username=settings.AUTH_USERNAME,
+        expected_password=settings.AUTH_PASSWORD,
+    )
+    return AuthUseCases(auth_service)
