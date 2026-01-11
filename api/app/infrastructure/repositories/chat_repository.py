@@ -35,6 +35,7 @@ class ChatRepository:
         self,
         session_id: str,
         athlete_name: str,
+        athlete_id: Optional[str] = None,
         system_message: Optional[str] = None,
         agent_config: Optional[Dict[str, Any]] = None
     ) -> ChatSessionModel:
@@ -44,6 +45,7 @@ class ChatRepository:
         Args:
             session_id: ID unico de la sesion de entrenamiento
             athlete_name: Nombre del atleta asociado
+            athlete_id: ID del atleta asociado (opcional, para busqueda robusta)
             system_message: Mensaje de sistema del agente
             agent_config: Configuracion adicional del agente
             
@@ -53,6 +55,7 @@ class ChatRepository:
         chat_session = ChatSessionModel(
             session_id=session_id,
             athlete_name=athlete_name,
+            athlete_id=athlete_id,
             messages=[],
             system_message=system_message,
             agent_config=agent_config or {},
@@ -86,21 +89,33 @@ class ChatRepository:
     async def get_by_athlete(
         self, 
         athlete_name: str, 
+        athlete_id: Optional[str] = None,
         active_only: bool = True
     ) -> List[ChatSessionModel]:
         """
         Obtiene todas las sesiones de chat de un atleta.
+        Si se proporciona athlete_id, busca por ID O por nombre parcial (para compatibilidad).
         
         Args:
             athlete_name: Nombre del atleta
+            athlete_id: ID del atleta (opcional)
             active_only: Si solo retornar sesiones activas
             
         Returns:
             Lista de ChatSessionModel
         """
-        query = select(ChatSessionModel).where(
-            ChatSessionModel.athlete_name == athlete_name
-        )
+        if athlete_id:
+            # Search by ID OR partial name match to include old sessions without ID
+            # and new sessions with ID.
+            query = select(ChatSessionModel).where(
+                (ChatSessionModel.athlete_id == athlete_id) | 
+                (ChatSessionModel.athlete_name.ilike(f"%{athlete_name}%"))
+            )
+        else:
+            # Fallback to name only
+            query = select(ChatSessionModel).where(
+                ChatSessionModel.athlete_name.ilike(f"%{athlete_name}%")
+            )
         
         if active_only:
             query = query.where(ChatSessionModel.is_active == True)

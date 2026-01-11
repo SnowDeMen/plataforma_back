@@ -37,6 +37,7 @@ class ChatSessionModel(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String(255), nullable=False, unique=True, index=True)
+    athlete_id = Column(String(255), nullable=True, index=True)
     athlete_name = Column(String(255), nullable=False, index=True)
     messages = Column(JSON, nullable=False, default=list)
     system_message = Column(Text, nullable=True)

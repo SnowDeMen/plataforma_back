@@ -275,3 +275,27 @@ class AthleteRepository:
         query = select(AthleteModel.id).where(AthleteModel.id == athlete_id)
         result = await self.db.execute(query)
         return result.scalar_one_or_none() is not None
+
+    async def get_by_name(self, name: str) -> Optional[AthleteModel]:
+        """
+        Obtiene un atleta por su nombre (case insensitive).
+        Busca coincidencia exacta en 'name' o 'full_name' ignorando mayúsculas.
+        
+        Args:
+            name: Nombre del atleta
+            
+        Returns:
+            AthleteModel o None
+        """
+        from sqlalchemy import func
+        
+        name_lower = name.strip().lower()
+        
+        # Buscar por name o full_name case-insensitive
+        query = select(AthleteModel).where(
+            (func.lower(AthleteModel.name) == name_lower) | 
+            (func.lower(AthleteModel.full_name) == name_lower)
+        ).limit(1)
+        
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()

@@ -88,3 +88,19 @@ class PlanNotFoundException(DomainException):
             details={"plan_id": plan_id}
         )
         self.status_code = 404
+
+
+class AthleteNotFoundInTPException(DomainException):
+    """Excepcion cuando el atleta no se encuentra en TrainingPeaks despues de varios intentos."""
+    
+    def __init__(self, athlete_name: str, attempts: list[str]):
+        super().__init__(
+            message=f"No se pudo encontrar al atleta '{athlete_name}' en TrainingPeaks",
+            error_code="ATHLETE_NOT_FOUND_IN_TP",
+            details={
+                "original_name": athlete_name,
+                "attempted_variations": attempts,
+                "suggestion": "Verifica que el nombre en TrainingPeaks coincida con alguna variacion del nombre en el sistema."
+            }
+        )
+        self.status_code = 404

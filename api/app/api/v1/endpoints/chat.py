@@ -3,7 +3,7 @@ Endpoints para operaciones de chat.
 Maneja el envio y recepcion de mensajes del agente de chat.
 """
 import time
-from typing import List
+from typing import List, Optional
 from fastapi import APIRouter, Depends, status
 
 from app.application.use_cases.chat_use_cases import ChatUseCases
@@ -219,6 +219,7 @@ athlete_router = APIRouter(prefix="/athletes", tags=["Chat"])
 )
 async def get_athlete_sessions(
     athlete_name: str,
+    athlete_id: Optional[str] = None,
     active_only: bool = True,
     use_cases: ChatUseCases = Depends(get_chat_use_cases)
 ) -> List[ChatSessionInfoDTO]:
@@ -236,7 +237,7 @@ async def get_athlete_sessions(
     Returns:
         Lista de ChatSessionInfoDTO con las sesiones del atleta
     """
-    return await use_cases.get_athlete_sessions(athlete_name, active_only)
+    return await use_cases.get_athlete_sessions(athlete_name, athlete_id, active_only)
 
 
 @athlete_router.delete(
