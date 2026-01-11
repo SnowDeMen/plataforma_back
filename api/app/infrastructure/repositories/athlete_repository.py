@@ -80,25 +80,16 @@ class AthleteRepository:
         Crea un nuevo atleta en la base de datos.
         
         Args:
-            athlete_data: Diccionario con los datos del atleta
+            athlete_data: Diccionario con los datos del atleta (flat)
             
         Returns:
             AthleteModel creado
         """
-        athlete = AthleteModel(
-            id=athlete_data["id"],
-            name=athlete_data["name"],
-            age=athlete_data.get("age"),
-            discipline=athlete_data.get("discipline"),
-            level=athlete_data.get("level"),
-            goal=athlete_data.get("goal"),
-            status=athlete_data.get("status", "Por generar"),
-            experience=athlete_data.get("experience"),
-            personal=athlete_data.get("personal"),
-            medica=athlete_data.get("medica"),
-            deportiva=athlete_data.get("deportiva"),
-            performance=athlete_data.get("performance")
-        )
+        # Asegurar status por defecto
+        if "status" not in athlete_data:
+            athlete_data["status"] = "Por generar"
+            
+        athlete = AthleteModel(**athlete_data)
         
         self.db.add(athlete)
         await self.db.flush()

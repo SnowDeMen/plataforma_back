@@ -68,11 +68,15 @@ def get_table_sync_config(
         return TableSyncConfig(
             airtable_table_name=canonical_name,
             airtable_last_modified_field=airtable_last_modified_field,
-            target_schema=target_schema,
+            target_schema="public",
             target_table="athletes",
             field_mappings=[
                 FieldMapping(airtable_field="Nombre completo", pg_column="full_name"),
-                FieldMapping(airtable_field="Apellido(s)", pg_column="last_name"),
+                FieldMapping(
+                    airtable_field="Apellido(s)", 
+                    pg_column="last_name",
+                    transform=lambda v: str(v).strip().title() if v else None
+                ),
                 FieldMapping(airtable_field="Consentimiento", pg_column="consent"),
                 FieldMapping(airtable_field="Fecha de nacimiento", pg_column="date_of_birth"),
                 FieldMapping(airtable_field="Género", pg_column="gender"),
@@ -82,10 +86,10 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="Instagram", pg_column="instagram"),
                 FieldMapping(airtable_field="Contacto de emergencia", pg_column="emergency_contact_name"),
                 FieldMapping(airtable_field="Teléfono contacto de emergencia", pg_column="emergency_contact_phone"),
-                FieldMapping(airtable_field="Peso actual", pg_column="current_weight", transform=lambda v: float(v) if v else None),
-                FieldMapping(airtable_field="Peso objetivo", pg_column="target_weight", transform=lambda v: float(v) if v else None),
-                FieldMapping(airtable_field="Peso Máximo Histórico", pg_column="max_historical_weight", transform=lambda v: float(v) if v else None),
-                FieldMapping(airtable_field="Altura", pg_column="height", transform=lambda v: float(v) if v else None),
+                FieldMapping(airtable_field="Peso actual", pg_column="current_weight", transform=lambda v: str(v) if v else None),
+                FieldMapping(airtable_field="Peso objetivo", pg_column="target_weight", transform=lambda v: str(v) if v else None),
+                FieldMapping(airtable_field="Peso Máximo Histórico", pg_column="max_historical_weight", transform=lambda v: str(v) if v else None),
+                FieldMapping(airtable_field="Altura", pg_column="height", transform=lambda v: str(v) if v else None),
                 FieldMapping(airtable_field="Enfermedad o padecimientos", pg_column="diseases_conditions"),
                 FieldMapping(airtable_field="Lesión o enfermedad aguda", pg_column="acute_injury_disease"),
                 FieldMapping(airtable_field="Tipo de lesión o enfermedad aguda", pg_column="acute_injury_type"),
@@ -93,15 +97,27 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="Historial de Fracturas", pg_column="fracture_history"),
                 FieldMapping(airtable_field="Medicamentos", pg_column="medications"),
                 FieldMapping(airtable_field="Suplementos", pg_column="supplements"),
-                FieldMapping(airtable_field="¿Fumas?", pg_column="smoker"),
-                FieldMapping(airtable_field="Alcohol", pg_column="alcohol_consumption"),
+                FieldMapping(
+                    airtable_field="¿Fumas?", 
+                    pg_column="smoker",
+                    transform=lambda v: ", ".join(v) if isinstance(v, list) else str(v) if v else None
+                ),
+                FieldMapping(
+                    airtable_field="Alcohol", 
+                    pg_column="alcohol_consumption",
+                    transform=lambda v: ", ".join(v) if isinstance(v, list) else str(v) if v else None
+                ),
                 FieldMapping(airtable_field="¿Cuántas horas al día duermes?", pg_column="daily_sleep_hours"),
                 FieldMapping(airtable_field="¿Cómo calificas tu calidad de sueño?", pg_column="sleep_quality"),
                 FieldMapping(airtable_field="Comidas al día", pg_column="meals_per_day"),
                 FieldMapping(airtable_field="Dieta", pg_column="diet_type"),
                 FieldMapping(airtable_field="Cuentame un poco sobre tu dieta", pg_column="diet_description"),
                 FieldMapping(airtable_field="Tipo de atleta", pg_column="athlete_type"),
-                FieldMapping(airtable_field="¿Cuántas disciplinas vas a practicar?", pg_column="disciplines_count"),
+                FieldMapping(
+                    airtable_field="¿Cuántas disciplinas vas a practicar?", 
+                    pg_column="discipline",
+                    transform=lambda v: ", ".join(v) if isinstance(v, list) else str(v) if v else None
+                ),
                 FieldMapping(airtable_field="¿Qué deportes has practicado previamente?", pg_column="previous_sports"),
                 FieldMapping(airtable_field="Tiempo practicando Running", pg_column="running_experience_time"),
                 FieldMapping(airtable_field="Tiempo practicando Ciclismo", pg_column="cycling_experience_time"),
@@ -132,7 +148,11 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="¿Cuentas con reloj? ¿Qué marca?", pg_column="watch_brand_model"),
                 FieldMapping(airtable_field="¿Cuentas con reloj?", pg_column="has_watch"),
                 FieldMapping(airtable_field="¿Qué marca de reloj?", pg_column="watch_brand"),
-                FieldMapping(airtable_field="¿Con cuál de los siguientes medidores cuentas?", pg_column="sensors_owned"),
+                FieldMapping(
+                    airtable_field="¿Con cuál de los siguientes medidores cuentas?", 
+                    pg_column="sensors_owned",
+                     transform=lambda v: ", ".join(v) if isinstance(v, list) else str(v) if v else None
+                ),
                 FieldMapping(airtable_field="¿Cuentas con alberca?", pg_column="has_pool_access"),
                 FieldMapping(airtable_field="¿Cuentas con rodillo inteligente?", pg_column="has_smart_trainer"),
                 FieldMapping(airtable_field="Escribe una breve explicación de por qué quieres practicar el deporte", pg_column="reason_for_sport"),
@@ -145,12 +165,20 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="Pago pendiente", pg_column="pending_payment"),
                 FieldMapping(airtable_field="Link de formulario (from Cliente)", pg_column="form_link"),
                 FieldMapping(airtable_field="Categoria Objetivo Peso", pg_column="weight_objective_category"),
-                FieldMapping(airtable_field="% Malos Habitos", pg_column="bad_habits_percentage", transform=lambda v: float(v) if v else None),
+                FieldMapping(airtable_field="% Malos Habitos", pg_column="bad_habits_percentage", transform=lambda v: str(v) if v else None),
                 FieldMapping(airtable_field="Fecha de Registro", pg_column="registration_date"),
                 FieldMapping(airtable_field="Fecha de inicio de entrenamiento", pg_column="training_start_date"),
                 FieldMapping(airtable_field="Estatus", pg_column="status"),
+                # Mapeos adicionales para unificar
+                FieldMapping(
+                    airtable_field="Nombre completo", 
+                    pg_column="name", 
+                    required=True,
+                    transform=lambda v: str(v).strip().title() if v else None
+                ), # Usamos Nombre completo como fallback para 'name'
             ],
             external_id_column="airtable_id",
+            record_id_column="id",
         )
 
     # ---------------------------------------------------------------------

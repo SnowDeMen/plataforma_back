@@ -90,164 +90,138 @@ class TrainingModel(Base):
 
 
 
-class AirtableAthleteModel(Base):
-    """
-    Modelo mapeado a la tabla sincronizada desde Airtable.
-    Schema: airtable
-    Table: athletes
-    """
-    __tablename__ = "athletes"
-    __table_args__ = {"schema": "airtable"}
-
-    airtable_record_id = Column(String, primary_key=True)
-    airtable_last_modified = Column(DateTime(timezone=True), nullable=False)
-    synced_at = Column(DateTime(timezone=True), nullable=False)
-    is_deleted = Column(Boolean, nullable=False, default=False)
-
-    full_name = Column(String)
-    last_name = Column(String)
-    consent = Column(String)
-    date_of_birth = Column(String) 
-    gender = Column(String)
-    country = Column(String)
-    state = Column(String)
-    city = Column(String)
-    instagram = Column(String)
-    emergency_contact_name = Column(String)
-    emergency_contact_phone = Column(String)
-    current_weight = Column(String)
-    target_weight = Column(String)
-    max_historical_weight = Column(String)
-    height = Column(String)
-    diseases_conditions = Column(String)
-    acute_injury_disease = Column(String)
-    acute_injury_type = Column(String)
-    has_fractures_sprains_history = Column(String)
-    fracture_history = Column(String)
-    medications = Column(String)
-    supplements = Column(String)
-    smoker = Column(String)
-    alcohol_consumption = Column(String)
-    daily_sleep_hours = Column(String)
-    sleep_quality = Column(String)
-    meals_per_day = Column(String)
-    diet_type = Column(String)
-    diet_description = Column(String)
-    athlete_type = Column(String)
-    disciplines_count = Column(String)
-    previous_sports = Column(String)
-    running_experience_time = Column(String)
-    cycling_experience_time = Column(String)
-    swimming_experience_time = Column(String)
-    short_term_goal = Column(String)
-    medium_term_goal = Column(String)
-    long_term_goal = Column(String)
-    best_time_5k = Column(String)
-    best_time_10k = Column(String)
-    best_time_10k = Column(String)
-    best_time_21k = Column(String)
-    marathon_time = Column(String)
-    triathlon_distance = Column(String)
-    triathlon_time = Column(String)
-    triathlon_place = Column(String)
-    longest_run_distance = Column(String)
-    longest_run_event = Column(String)
-    longest_run_date = Column(String)
-    training_frequency_weekly = Column(String)
-    training_hours_weekly = Column(String)
-    preferred_schedule = Column(String)
-    schedule = Column(String)
-    preferred_rest_day = Column(String)
-    sacrifice_rest_day = Column(String)
-    main_event = Column(String)
-    event_type = Column(String)
-    time_to_event = Column(String)
-    secondary_events = Column(String)
-    watch_brand_model = Column(String)
-    has_watch = Column(String)
-    watch_brand = Column(String)
-    sensors_owned = Column(String)
-    has_pool_access = Column(String)
-    has_smart_trainer = Column(String)
-    reason_for_sport = Column(String)
-    annual_goals = Column(String)
-    preferred_communication_channels = Column(String)
-    whatsapp_group_interest = Column(String)
-    discount = Column(String)
-    client_status = Column(String)
-    old_registration_date = Column(String)
-    pending_payment = Column(String)
-    form_link = Column(String)
-    weight_objective_category = Column(String)
-    bad_habits_percentage = Column(String)
-    registration_date = Column(DateTime(timezone=True))
-    training_start_date = Column(String)
-    status = Column(String)
-
-    def __repr__(self):
-        return f"<AirtableAthlete(id={self.airtable_record_id}, name={self.full_name})>"
-
-
-class SyncStateModel(Base):
-    """
-    Modelo para el estado de sincronización (cursor incremental).
-    Tabla: sync_state (public schema)
-    """
-    __tablename__ = "sync_state"
-
-    source = Column(String, primary_key=True)
-    source_table = Column(String, primary_key=True)
-    target_schema = Column(String, primary_key=True)
-    target_table = Column(String, primary_key=True)
-
-    cursor_last_modified = Column(DateTime(timezone=True), nullable=False, default=datetime(1970, 1, 1, tzinfo=None))
-    
-    last_run_started_at = Column(DateTime(timezone=True), nullable=True)
-    last_run_completed_at = Column(DateTime(timezone=True), nullable=True)
-    last_run_status = Column(String, nullable=True) # running | success | error
-    last_run_error = Column(String, nullable=True)
-
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-    def __repr__(self):
-        return f"<SyncState({self.source_table} -> {self.target_table}, status={self.last_run_status})>"
-
 
 class AthleteModel(Base):
     """
     Modelo de base de datos para atletas.
+    Combina la informacion sincronizada de Airtable (perfil)
+    con la informacion generada por la app (performance).
     
-    Almacena informacion completa del atleta incluyendo datos
-    personales, medicos, deportivos y de performance.
-    
-    Estados posibles:
-    - Por generar: Pendiente de generar plan
-    - Por revisar: Plan en espera de validacion
-    - Plan activo: Atleta con plan activo
+    Tabla: athletes (public schema)
     """
-    
     __tablename__ = "athletes"
     
-    id = Column(String(255), primary_key=True)
-    name = Column(String(255), nullable=False, index=True)
-    age = Column(Integer, nullable=True)
-    discipline = Column(String(100), nullable=True)
-    level = Column(String(100), nullable=True)
-    goal = Column(String(255), nullable=True)
-    status = Column(String(50), default="Por generar", index=True)
-    experience = Column(String(255), nullable=True)
-    
-    # Datos estructurados en JSON
-    personal = Column(JSON, nullable=True)    # genero, bmi, sesionesSemanales, etc.
-    medica = Column(JSON, nullable=True)      # enfermedades, horasSueno, etc.
-    deportiva = Column(JSON, nullable=True)   # eventoObjetivo, records, etc.
-    performance = Column(JSON, nullable=True) # historial de workouts
-    
+    # Identificadores y Metadata
+    id = Column(String(255), primary_key=True)  # Mismo que airtable_record_id
+    airtable_id = Column(String(255), nullable=True, index=True) # ID redundante o external_id
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
+    # Campos de Sincronizacion
+    airtable_last_modified = Column(DateTime(timezone=True), nullable=True)
+    synced_at = Column(DateTime(timezone=True), nullable=True)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+
+    # Datos Principales (Mapeados desde Airtable)
+    name = Column(String(255), nullable=False, index=True)
+    full_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    status = Column(String(50), default="Por generar", index=True)
+    
+    # Perfil Deportivo y Fisico
+    discipline = Column(String(100), nullable=True)
+    level = Column(String(100), nullable=True)
+    goal = Column(String(255), nullable=True)
+    age = Column(Integer, nullable=True)
+    experience = Column(String(255), nullable=True)
+    
+    # Datos Personales (Flat)
+    consent = Column(String, nullable=True)
+    date_of_birth = Column(String, nullable=True) 
+    gender = Column(String, nullable=True)
+    country = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    city = Column(String, nullable=True)
+    instagram = Column(String, nullable=True)
+    emergency_contact_name = Column(String, nullable=True)
+    emergency_contact_phone = Column(String, nullable=True)
+    current_weight = Column(String, nullable=True)
+    target_weight = Column(String, nullable=True)
+    max_historical_weight = Column(String, nullable=True)
+    height = Column(String, nullable=True)
+    
+    # Datos Medicos (Flat)
+    diseases_conditions = Column(String, nullable=True)
+    acute_injury_disease = Column(String, nullable=True)
+    acute_injury_type = Column(String, nullable=True)
+    has_fractures_sprains_history = Column(String, nullable=True)
+    fracture_history = Column(String, nullable=True)
+    medications = Column(String, nullable=True)
+    supplements = Column(String, nullable=True)
+    smoker = Column(String, nullable=True)
+    alcohol_consumption = Column(String, nullable=True)
+    daily_sleep_hours = Column(String, nullable=True)
+    sleep_quality = Column(String, nullable=True)
+    meals_per_day = Column(String, nullable=True)
+    diet_type = Column(String, nullable=True)
+    diet_description = Column(String, nullable=True)
+    
+    # Datos Deportivos Detallados (Flat)
+    athlete_type = Column(String, nullable=True)
+    disciplines_count = Column(String, nullable=True)
+    previous_sports = Column(String, nullable=True)
+    running_experience_time = Column(String, nullable=True)
+    cycling_experience_time = Column(String, nullable=True)
+    swimming_experience_time = Column(String, nullable=True)
+    short_term_goal = Column(String, nullable=True)
+    medium_term_goal = Column(String, nullable=True)
+    long_term_goal = Column(String, nullable=True)
+    
+    # Records (Flat)
+    best_time_5k = Column(String, nullable=True)
+    best_time_10k = Column(String, nullable=True)
+    # best_time_10k_duplicado = Column(String, nullable=True) # Removido el duplicado
+    best_time_21k = Column(String, nullable=True)
+    marathon_time = Column(String, nullable=True)
+    triathlon_distance = Column(String, nullable=True)
+    triathlon_time = Column(String, nullable=True)
+    triathlon_place = Column(String, nullable=True)
+    longest_run_distance = Column(String, nullable=True)
+    longest_run_event = Column(String, nullable=True)
+    longest_run_date = Column(String, nullable=True)
+    
+    # Preferencias de Entrenamiento (Flat)
+    training_frequency_weekly = Column(String, nullable=True)
+    training_hours_weekly = Column(String, nullable=True)
+    preferred_schedule = Column(String, nullable=True)
+    schedule = Column(String, nullable=True)
+    preferred_rest_day = Column(String, nullable=True)
+    sacrifice_rest_day = Column(String, nullable=True)
+    main_event = Column(String, nullable=True)
+    event_type = Column(String, nullable=True)
+    time_to_event = Column(String, nullable=True)
+    secondary_events = Column(String, nullable=True)
+    
+    # Equipamiento (Flat)
+    watch_brand_model = Column(String, nullable=True)
+    has_watch = Column(String, nullable=True)
+    watch_brand = Column(String, nullable=True)
+    sensors_owned = Column(String, nullable=True)
+    has_pool_access = Column(String, nullable=True)
+    has_smart_trainer = Column(String, nullable=True)
+    
+    # Otros (Flat)
+    reason_for_sport = Column(String, nullable=True)
+    annual_goals = Column(String, nullable=True)
+    preferred_communication_channels = Column(String, nullable=True)
+    whatsapp_group_interest = Column(String, nullable=True)
+    discount = Column(String, nullable=True)
+    client_status = Column(String, nullable=True)
+    old_registration_date = Column(String, nullable=True)
+    pending_payment = Column(String, nullable=True)
+    form_link = Column(String, nullable=True)
+    weight_objective_category = Column(String, nullable=True)
+    bad_habits_percentage = Column(String, nullable=True)
+    registration_date = Column(DateTime(timezone=True), nullable=True)
+    training_start_date = Column(String, nullable=True)
+
+    # Datos Generados por App (JSON se mantiene para estructuras complejas generadas internamente)
+    performance = Column(JSON, nullable=True) 
+    
     def __repr__(self):
         return f"<Athlete(id={self.id}, name={self.name}, status={self.status})>"
+
 
 
 class TrainingPlanModel(Base):

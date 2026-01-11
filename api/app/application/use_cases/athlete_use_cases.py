@@ -8,13 +8,19 @@ from typing import Optional, List, Dict, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
+from datetime import datetime
 
 from app.application.dto.athlete_dto import (
     AthleteDTO,
     AthleteListItemDTO,
     AthleteUpdateDTO,
     AthleteStatusUpdateDTO,
-    AthleteCreateDTO
+    AthleteCreateDTO,
+    PersonalInfoDTO,
+    MedicaInfoDTO,
+    DeportivaInfoDTO,
+    RecordsDTO,
+    PerformanceSummaryDTO
 )
 from app.infrastructure.repositories.athlete_repository import AthleteRepository
 from app.shared.exceptions.domain import EntityNotFoundException
@@ -80,6 +86,7 @@ class AthleteUseCases:
             AthleteListItemDTO(
                 id=a.id,
                 name=a.name,
+                last_name=a.last_name,
                 age=a.age,
                 discipline=a.discipline,
                 level=a.level,
@@ -89,37 +96,107 @@ class AthleteUseCases:
             for a in athletes
         ]
 
+    def _calculate_age(self, dob_str: Optional[str]) -> Optional[int]:
+        """Calcula edad basada en fecha de nacimiento (YYYY-MM-DD)."""
+        if not dob_str:
+            return None
+        try:
+            # Intentar parsear fecha ISO (YYYY-MM-DD)
+            dob = datetime.strptime(dob_str[:10], "%Y-%m-%d").date()
+            today = datetime.now().date()
+            return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        except (ValueError, TypeError):
+            return None
+
+    def _calculate_bmi(self, weight_str: Optional[str], height_str: Optional[str]) -> Optional[float]:
+        """Calcula BMI (IMC)."""
+        if not weight_str or not height_str:
+            return None
+        try:
+            # Limpiar strings (e.g. "70 kg", "1.75 m")
+            w = float(''.join(c for c in weight_str if c.isdigit() or c == '.'))
+            h = float(''.join(c for c in height_str if c.isdigit() or c == '.'))
+            
+            # Asumir altura en cm si es > 3, convertir a metros
+            if h > 3: 
+                h = h / 100.0
+                
+            if h <= 0: return None
+            
+            bmi = w / (h * h)
+            return round(bmi, 2)
+        except (ValueError, ZeroDivisionError):
+            return None
+
     async def get_athlete(self, athlete_id: str) -> AthleteDTO:
         """
         Obtiene el detalle completo de un atleta.
-        
-        Args:
-            athlete_id: ID del atleta
-            
-        Returns:
-            AthleteDTO con todos los datos
-            
-        Raises:
-            AthleteNotFoundException: Si el atleta no existe
         """
         athlete = await self.repository.get_by_id(athlete_id)
         
         if not athlete:
             raise AthleteNotFoundException(athlete_id)
+            
+        # Logica de fallback/calculo para campos faltantes
+        age = athlete.age
+        if not age:
+            age = self._calculate_age(athlete.date_of_birth)
+            
+        discipline = athlete.discipline
+        if not discipline:
+            discipline = athlete.athlete_type
+            
+        bmi = self._calculate_bmi(athlete.current_weight, athlete.height)
+
+        # Fallback para goal (usado en el header del chat)
+        goal = athlete.goal
+        if not goal:
+            goal = athlete.main_event or athlete.short_term_goal
         
         return AthleteDTO(
             id=athlete.id,
             name=athlete.name,
-            age=athlete.age,
-            discipline=athlete.discipline,
+            last_name=athlete.last_name,
+            age=age,
+            discipline=discipline,
             level=athlete.level,
-            goal=athlete.goal,
+            goal=goal,
             status=athlete.status,
             experience=athlete.experience,
-            personal=athlete.personal,
-            medica=athlete.medica,
-            deportiva=athlete.deportiva,
-            performance=athlete.performance
+            personal=PersonalInfoDTO(
+                nombreCompleto=athlete.full_name,
+                genero=athlete.gender,
+                tipoAtleta=athlete.athlete_type,
+                sesionesSemanales=athlete.training_frequency_weekly,
+                horasSemanales=athlete.training_hours_weekly,
+                horarioPreferido=athlete.preferred_schedule,
+                diaDescanso=athlete.preferred_rest_day,
+                bmi=bmi # Campo extra calculado
+            ),
+            medica=MedicaInfoDTO(
+                enfermedades=athlete.diseases_conditions,
+                adicciones=f"{athlete.smoker or ''} {athlete.alcohol_consumption or ''}".strip(),
+                horasSueno=int(athlete.daily_sleep_hours) if athlete.daily_sleep_hours and athlete.daily_sleep_hours.isdigit() else None,
+                calidadSueno=athlete.sleep_quality,
+                dieta=athlete.diet_type
+            ),
+            deportiva=DeportivaInfoDTO(
+                tiempoPracticando=athlete.running_experience_time, # Asumiendo running como principal
+                records=RecordsDTO(
+                    distanciaMaxima=athlete.longest_run_distance,
+                    dist5k=athlete.best_time_5k,
+                    dist10k=athlete.best_time_10k,
+                    dist21k=athlete.best_time_21k,
+                    maraton=athlete.marathon_time,
+                    triatlon=athlete.triathlon_distance
+                ),
+                medidores=[s.strip() for s in athlete.sensors_owned.split(',')] if athlete.sensors_owned else [],
+                equipo=athlete.watch_brand_model,
+                eventoObjetivo=athlete.main_event,
+                diasParaEvento=None, 
+                dedicacion=athlete.training_hours_weekly
+            ),
+            performance=PerformanceSummaryDTO(**athlete.performance) if athlete.performance else None
         )
 
     async def update_athlete(self, athlete_id: str, dto: AthleteUpdateDTO) -> AthleteDTO:
@@ -140,29 +217,31 @@ class AthleteUseCases:
         if not await self.repository.exists(athlete_id):
             raise AthleteNotFoundException(athlete_id)
         
-        # Convertir DTO a diccionario excluyendo None
-        update_data = dto.model_dump(exclude_none=True)
+        # Aplanar el DTO para actualizar
+        # Nota: Esta logica es simplificada. En un escenario real, deberiamos mapear
+        # cada campo del DTO anidado a la columna plana correspondiente.
+        # Por ahora, asumimos que si envian 'personal', quieren actualizar campos mapeados manualmente.
+        # Como es un UPDATE parcial, esto es complejo.
+        
+        # Para mantenerlo simple y funcional con el nuevo esquema:
+        # Extraemos los campos raiz
+        flat_data = dto.model_dump(exclude={"personal", "medica", "deportiva", "performance"}, exclude_none=True)
+        
+        # Si se envia performance (JSON), lo pasamos directo
+        if dto.performance:
+             flat_data["performance"] = dto.performance
+             
+        # TODO: Implementar mapeo inverso completo si se requiere editar perfil desde la App.
+        # Por ahora la App edita principalmente status y performance.
         
         # Actualizar
-        updated = await self.repository.update(athlete_id, update_data)
+        updated = await self.repository.update(athlete_id, flat_data)
         await self.db.commit()
         
         logger.info(f"Atleta {athlete_id} actualizado")
         
-        return AthleteDTO(
-            id=updated.id,
-            name=updated.name,
-            age=updated.age,
-            discipline=updated.discipline,
-            level=updated.level,
-            goal=updated.goal,
-            status=updated.status,
-            experience=updated.experience,
-            personal=updated.personal,
-            medica=updated.medica,
-            deportiva=updated.deportiva,
-            performance=updated.performance
-        )
+        # Reutilizamos get_athlete para devolver el objeto completo y formateado
+        return await self.get_athlete(athlete_id)
 
     async def update_status(self, athlete_id: str, dto: AthleteStatusUpdateDTO) -> AthleteDTO:
         """
@@ -199,24 +278,18 @@ class AthleteUseCases:
         Returns:
             AthleteDTO creado
         """
-        athlete_data = dto.model_dump()
+        # Convertir DTO anidado a plano para crear
+        # Mapeo basico de campos raiz
+        athlete_data = dto.model_dump(exclude={"personal", "medica", "deportiva"}, mode='json')
+        
+        # Si vienen datos anidados, podriamos intentar colapsarlos, pero
+        # la creacion desde App usualmente es basica.
+        # Si se requiere crear perfil completo, necesitariamos el mapper inverso.
+        
         athlete = await self.repository.create(athlete_data)
         await self.db.commit()
         
-        return AthleteDTO(
-            id=athlete.id,
-            name=athlete.name,
-            age=athlete.age,
-            discipline=athlete.discipline,
-            level=athlete.level,
-            goal=athlete.goal,
-            status=athlete.status,
-            experience=athlete.experience,
-            personal=athlete.personal,
-            medica=athlete.medica,
-            deportiva=athlete.deportiva,
-            performance=athlete.performance
-        )
+        return await self.get_athlete(athlete.id)
 
     async def seed_athletes(self, athletes_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """

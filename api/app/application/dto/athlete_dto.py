@@ -137,6 +137,7 @@ class AthleteDTO(BaseModel):
     """DTO completo para un atleta (Dominio/Plan)."""
     id: str
     name: str
+    last_name: Optional[str] = None
     age: Optional[int] = None
     discipline: Optional[str] = None
     level: Optional[str] = None
@@ -156,6 +157,7 @@ class AthleteListItemDTO(BaseModel):
     """DTO resumido para listas de atletas."""
     id: str
     name: str
+    last_name: Optional[str] = None
     age: Optional[int] = None
     discipline: Optional[str] = None
     level: Optional[str] = None
