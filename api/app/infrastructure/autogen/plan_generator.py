@@ -333,7 +333,7 @@ class PlanGenerator:
         experience = athlete_context.get('experience', 'No especificado')
         
         # Datos personales
-        personal = athlete_context.get('personal', {})
+        personal = athlete_context.get('personal') or {}
         genero = personal.get('genero', 'No especificado')
         bmi = personal.get('bmi', 'No especificado')
         sesiones_semanales = personal.get('sesionesSemanales', '3-4')
@@ -342,18 +342,18 @@ class PlanGenerator:
         dia_descanso = personal.get('diaDescanso', 'Domingo')
         
         # Datos medicos
-        medica = athlete_context.get('medica', {})
+        medica = athlete_context.get('medica') or {}
         enfermedades = medica.get('enfermedades', 'Ninguna')
         horas_sueno = medica.get('horasSueno', 7)
         
         # Datos deportivos
-        deportiva = athlete_context.get('deportiva', {})
+        deportiva = athlete_context.get('deportiva') or {}
         evento_objetivo = deportiva.get('eventoObjetivo', goal)
         dias_para_evento = deportiva.get('diasParaEvento', 'No especificado')
         dedicacion = deportiva.get('dedicacion', sesiones_semanales)
         
         # Records
-        records = deportiva.get('records', {})
+        records = deportiva.get('records') or {}
         records_str = ""
         if records:
             if records.get('dist5k'):
@@ -366,7 +366,7 @@ class PlanGenerator:
                 records_str += f"- Maraton: {records['maraton']}\n"
         
         # Historial de entrenamientos
-        performance = athlete_context.get('performance', {})
+        performance = athlete_context.get('performance') or {}
         workouts_history = performance.get('workouts', [])
         history_str = ""
         if workouts_history:
