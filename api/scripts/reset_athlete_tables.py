@@ -17,7 +17,15 @@ async def reset_tables():
         await conn.execute(text("DROP TABLE IF EXISTS public.athletes CASCADE;"))
         await conn.execute(text("DROP TABLE IF EXISTS airtable.athletes CASCADE;"))
         # Tambien limpiar el estado de sync para forzar una sincronizacion fresca
-        await conn.execute(text("DELETE FROM public.sync_state WHERE target_table = 'athletes';"))
+        # Usamos un bloque DO para avisar si la tabla no existe
+        await conn.execute(text("""
+            DO $$ 
+            BEGIN
+                IF EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = 'sync_state') THEN
+                    DELETE FROM public.sync_state WHERE target_table = 'athletes';
+                END IF;
+            END $$;
+        """))
         
     print("Recreando tablas...")
     await init_db()
