@@ -17,6 +17,7 @@ from app.application.dto.plan_dto import (
     PlanWorkoutDTO,
     WeekSummaryDTO,
     PlanApprovalDTO,
+    PlanApplyRequestDTO,
     PlanModifyRequestDTO,
     PlanModifyResponseDTO,
     PlanModifyChangeDTO,
@@ -28,6 +29,7 @@ from app.application.dto.plan_dto import (
 from app.infrastructure.repositories.plan_repository import PlanRepository
 from app.infrastructure.autogen.plan_generator import PlanGenerator
 from app.shared.exceptions.domain import PlanNotFoundException
+from app.application.interfaces.trainingpeaks_plan_publisher import TrainingPeaksPlanPublisher
 
 
 class PlanUseCases:
@@ -395,6 +397,66 @@ class PlanUseCases:
         logger.info(f"Plan {plan_id} aprobado")
         
         return self._to_dto(plan)
+
+    async def approve_and_apply_plan(
+        self,
+        plan_id: int,
+        dto: PlanApplyRequestDTO,
+        publisher: Optional[TrainingPeaksPlanPublisher] = None
+    ) -> TrainingPlanDTO:
+        """
+        Aprueba y aplica un plan de entrenamiento en TrainingPeaks.
+
+        Reglas:
+        - Flujo determinista y bloqueante (la request espera el resultado).
+        - NO usa MCP: se levanta una sesión efímera de Selenium para publicar los workouts.
+        - Si cualquier paso falla, NO se marca el plan como 'applied'.
+        """
+        plan = await self.repository.get_by_id(plan_id)
+        if not plan:
+            raise PlanNotFoundException(plan_id)
+
+        if plan.status == "applied":
+            raise ValueError("El plan ya fue aplicado anteriormente")
+
+        if not dto.workouts:
+            raise ValueError("No se recibieron workouts para aplicar")
+
+        if publisher is None:
+            from app.infrastructure.trainingpeaks.selenium_plan_publisher import (
+                SeleniumTrainingPeaksPlanPublisher,
+            )
+            publisher = SeleniumTrainingPeaksPlanPublisher()
+
+        try:
+            # Publicar en TrainingPeaks (Selenium directo)
+            publisher.publish_plan(
+                plan_id=plan_id,
+                athlete_name=plan.athlete_name,
+                workouts=dto.workouts,
+                start_date=plan.start_date,
+                # Por requerimiento, si no se envía carpeta se usa Neuronomy.
+                folder_name=dto.folder_name or "Neuronomy",
+            )
+
+            # Si no falló, marcar el plan como aplicado.
+            now = datetime.utcnow()
+            await self.repository.update_status(
+                plan_id,
+                "applied",
+                approved_at=now,
+                applied_at=now,
+            )
+            await self.db.commit()
+
+            plan = await self.repository.get_by_id(plan_id)
+            logger.info(f"Plan {plan_id} aplicado en TrainingPeaks")
+            return self._to_dto(plan)
+
+        except Exception as e:
+            # No cambiamos estado en DB; solo log y propagamos.
+            logger.error(f"Error aplicando plan {plan_id} en TrainingPeaks: {e}")
+            raise
     
     async def reject_plan(
         self, 

@@ -168,6 +168,29 @@ class PlanApprovalDTO(BaseModel):
         from_attributes = True
 
 
+class PlanApplyRequestDTO(BaseModel):
+    """
+    DTO para aprobar y aplicar un plan a TrainingPeaks.
+
+    Importante:
+    - El frontend envía el JSON de workouts (derivado del plan) para que el backend
+      ejecute un flujo determinístico (Selenium directo, sin MCP).
+    - El backend puede usar `plan.start_date` para completar fechas faltantes si aplica.
+    """
+
+    workouts: List[PlanWorkoutDTO] = Field(
+        default_factory=list,
+        description="Lista de workouts a subir/aplicar en TrainingPeaks"
+    )
+    folder_name: Optional[str] = Field(
+        default=None,
+        description="Carpeta destino en Workout Library (opcional)"
+    )
+
+    class Config:
+        from_attributes = True
+
+
 class PlanModifyRequestDTO(BaseModel):
     """
     DTO para solicitar la modificacion de un plan existente.
