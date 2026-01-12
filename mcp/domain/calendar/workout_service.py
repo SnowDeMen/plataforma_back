@@ -13,6 +13,227 @@ from ..core import get_driver
 from .navigation_service import _ensure_day_visible
 
 
+def _truncate_text(value: Optional[str], max_chars: int) -> Optional[str]:
+    """
+    Trunca texto para evitar payloads gigantes.
+    """
+    if value is None:
+        return None
+    if max_chars <= 0:
+        return ""
+    s = str(value)
+    return s if len(s) <= max_chars else (s[:max_chars] + "…(truncado)")
+
+
+def _safe_collect_clickable_detail_candidates() -> list:
+    """
+    Intenta encontrar candidatos clickeables dentro del Quick View que lleven
+    a la página completa del workout/actividad.
+    
+    Nota: TrainingPeaks cambia UI frecuentemente, así que usamos heurísticas:
+    - texto visible que contenga 'details' / 'detail' / 'ver'
+    - href que contenga 'workout'/'activity' o parámetros id
+    """
+    driver = get_driver()
+    candidates = []
+    try:
+        qv = driver.find_element(By.ID, "quickViewContent")
+    except Exception:
+        return candidates
+
+    # 1) anchors con href "interesante"
+    try:
+        links = qv.find_elements(By.CSS_SELECTOR, "a[href]")
+        for a in links:
+            try:
+                href = (a.get_attribute("href") or "").lower()
+                txt = (a.text or "").strip().lower()
+                if not a.is_displayed():
+                    continue
+                if any(k in href for k in ["workout", "activity", "workoutid", "activityid", "athleteworkout"]):
+                    candidates.append(a)
+                    continue
+                if "detail" in txt or "details" in txt or "ver" in txt:
+                    candidates.append(a)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # 2) botones (incluye MUI)
+    try:
+        btns = qv.find_elements(By.CSS_SELECTOR, "button, [role='button']")
+        for b in btns:
+            try:
+                if not b.is_displayed():
+                    continue
+                txt = (b.text or "").strip().lower()
+                aria = (b.get_attribute("aria-label") or "").strip().lower()
+                title = (b.get_attribute("title") or "").strip().lower()
+                haystack = " ".join([txt, aria, title])
+                if any(k in haystack for k in ["view details", "details", "detail", "ver detalles", "ver detalle"]):
+                    candidates.append(b)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    return candidates
+
+
+def open_full_workout_details_from_quickview(timeout: int = 12) -> bool:
+    """
+    Intenta navegar desde el Quick View hacia la página completa del workout/actividad.
+    
+    Estrategia (preferida por UI click):
+    - Busca candidatos clickeables dentro del Quick View con heurísticas.
+    - Click y espera a que cambie la URL o desaparezca el Quick View.
+    
+    Returns:
+        True si parece haber navegado a un detalle completo, False si no encontró forma.
+    """
+    driver = get_driver()
+    try:
+        before = driver.current_url
+    except Exception:
+        before = ""
+
+    candidates = _safe_collect_clickable_detail_candidates()
+    if not candidates:
+        return False
+
+    for el in candidates:
+        try:
+            try:
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+            except Exception:
+                pass
+
+            try:
+                el.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", el)
+
+            # Esperar a que cambie la URL o desaparezca el quickview.
+            def _navigated(d):
+                try:
+                    if before and d.current_url != before:
+                        return True
+                except Exception:
+                    pass
+                try:
+                    qv = d.find_elements(By.ID, "quickViewContent")
+                    if not qv:
+                        return True
+                except Exception:
+                    pass
+                return False
+
+            WebDriverWait(driver, timeout).until(_navigated)
+            return True
+        except Exception:
+            continue
+
+    return False
+
+
+def extract_full_workout_page_visible_details(
+    *,
+    max_visible_text_chars: int = 50_000,
+    max_html_chars_per_section: int = 120_000
+) -> Dict[str, Any]:
+    """
+    Extrae “todo lo visible” de la pestaña por defecto de la página completa.
+    
+    Nota:
+    - No renderizamos/ejecutamos nada; solo leemos DOM (texto/HTML).
+    - Se trunca para evitar explosión de tamaño.
+    """
+    driver = get_driver()
+
+    url = None
+    title = None
+    try:
+        url = driver.current_url
+    except Exception:
+        pass
+    try:
+        title = driver.title
+    except Exception:
+        pass
+
+    # Texto visible agregado (muy útil, pero puede ser grande).
+    try:
+        visible_text = driver.execute_script("return (document.body && document.body.innerText) ? document.body.innerText : '';")
+    except Exception:
+        visible_text = ""
+
+    # Secciones HTML (heurísticas). No dependemos de una UI exacta.
+    selectors = [
+        "main",
+        "#wrapper",
+        "div.appContainerLibrayAndContentContainer",
+        "div.appContainer",
+        "div#root",
+        "body",
+    ]
+    html_sections: list[Dict[str, Any]] = []
+    for sel in selectors:
+        try:
+            html = driver.execute_script(
+                "const el = document.querySelector(arguments[0]); return el ? el.outerHTML : null;",
+                sel
+            )
+        except Exception:
+            html = None
+        if not html:
+            continue
+        html_sections.append({
+            "selector": sel,
+            "outer_html": _truncate_text(str(html), max_html_chars_per_section),
+        })
+
+    return {
+        "current_url": url,
+        "page_title": title,
+        "visible_text": _truncate_text(str(visible_text), max_visible_text_chars),
+        "html_sections": html_sections,
+    }
+
+
+def return_to_calendar_from_details(timeout: int = 12) -> None:
+    """
+    Retorna al calendario desde la página de detalle.
+    
+    Estrategia mínima y robusta:
+    - driver.back()
+    - esperar a que exista el contenedor de calendario (week containers) o el QuickView (si vuelve ahí).
+    """
+    driver = get_driver()
+    try:
+        driver.back()
+    except Exception:
+        return
+
+    def _is_calendar_ready(d):
+        try:
+            if d.find_elements(By.CSS_SELECTOR, "div[data_cy='calendarWeekContainer']"):
+                return True
+        except Exception:
+            pass
+        try:
+            if d.find_elements(By.ID, "quickViewContent"):
+                return True
+        except Exception:
+            pass
+        return False
+
+    try:
+        WebDriverWait(driver, timeout).until(_is_calendar_ready)
+    except Exception:
+        pass
+
+
 def _simple_open_quickview_click(card, timeout=12):
     """
     Click simple sobre un target estable dentro de la card raíz del workout
@@ -531,6 +752,27 @@ def get_all_quickviews_on_date(target_date, use_today=True, timeout=12, limit=No
         except Exception as e:
             print(f"[{idx}] error extrayendo datos: {e}")
 
+        # 7.1) Extraer detalle completo (página completa) desde Quick View (si es posible).
+        # Importante: hacemos esto ANTES de cerrar el modal.
+        try:
+            if data is None:
+                data = {}
+            opened = open_full_workout_details_from_quickview(timeout=max(6, int(timeout)))
+            if opened:
+                # Esperar una señal mínima de carga de la página.
+                try:
+                    WebDriverWait(driver, max(6, int(timeout))).until(
+                        lambda d: (d.execute_script("return document.readyState") or "") == "complete"
+                    )
+                except Exception:
+                    pass
+                data["full_details"] = extract_full_workout_page_visible_details()
+                # Volver al calendario para continuar con el resto.
+                return_to_calendar_from_details(timeout=max(8, int(timeout)))
+        except Exception:
+            # No bloquear extracción por fallas de detalle completo.
+            pass
+
         # Enriquecer con metadatos
         try:
             wid = card.get_attribute("data-workoutid")
@@ -552,3 +794,132 @@ def get_all_quickviews_on_date(target_date, use_today=True, timeout=12, limit=No
         _simple_close_quickview(timeout=timeout)
 
     return results
+
+
+# =============== Ocultar workout del calendario ===============
+def _find_calendar_workout_card(workout_title: str, target_date, timeout: int = 12):
+    """
+    Encuentra la card de un workout en el calendario por titulo y fecha.
+    
+    Args:
+        workout_title: Titulo del workout a buscar
+        target_date: Fecha donde buscar (YYYY-MM-DD | date | datetime)
+        timeout: Tiempo maximo de espera
+        
+    Returns:
+        Elemento de la card del workout
+    """
+    driver = get_driver()
+    
+    # Asegurar que el dia este visible
+    day_el = _ensure_day_visible(target_date, use_today=False)
+    
+    # Buscar la card del workout por titulo
+    title_key = (workout_title or "").strip()[:28]
+    
+    cards = day_el.find_elements(
+        By.CSS_SELECTOR,
+        ".activities .activity.workout[data-workoutid]"
+    )
+    
+    for card in cards:
+        try:
+            if not card.is_displayed():
+                continue
+            # Buscar titulo dentro de la card
+            title_els = card.find_elements(By.CSS_SELECTOR, "h6.newActivityUItitle, h6, .newActivityUItitle")
+            for title_el in title_els:
+                txt = (title_el.text or "").strip()
+                if txt == workout_title or (title_key and title_key in txt):
+                    return card
+        except Exception:
+            continue
+    
+    raise TimeoutException(f"No se encontro workout '{workout_title}' en fecha {target_date}")
+
+
+def hide_calendar_workout(workout_title: str, target_date, timeout: int = 12) -> bool:
+    """
+    Oculta un workout del calendario usando el menu contextual (tomahawk).
+    
+    Pasos:
+    1. Encuentra el workout en el calendario
+    2. Click en tomahawk button (tres puntitos) dentro de la card
+    3. Click en "Hide"
+    
+    Args:
+        workout_title: Titulo del workout a ocultar
+        target_date: Fecha del workout (YYYY-MM-DD | date | datetime)
+        timeout: Tiempo maximo de espera para cada operacion
+        
+    Returns:
+        True si se oculto exitosamente
+    """
+    driver = get_driver()
+    
+    # Paso 1: Encontrar la card del workout
+    card = _find_calendar_workout_card(workout_title, target_date, timeout=timeout)
+    
+    # Hacer scroll para que la card sea visible
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", card)
+    time.sleep(0.2)
+    
+    # Paso 2: Click en tomahawk button (tres puntitos) DENTRO de la card
+    # El boton tomahawk esta directamente en la card, no en un QuickView
+    tomahawk_selectors = [
+        "button[data_cy='tomahawkButton']",
+        "button[data-cy='tomahawkButton']",
+        ".contextMenuMUIIcon",
+        "button.MuiIconButton-root",
+    ]
+    
+    tomahawk_btn = None
+    for sel in tomahawk_selectors:
+        try:
+            tomahawk_btn = card.find_element(By.CSS_SELECTOR, sel)
+            if tomahawk_btn.is_displayed():
+                break
+            tomahawk_btn = None
+        except Exception:
+            continue
+    
+    if tomahawk_btn is None:
+        raise TimeoutException("No se encontro el boton tomahawk en la card del workout")
+    
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", tomahawk_btn)
+    try:
+        tomahawk_btn.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", tomahawk_btn)
+    
+    # Paso 3: Click en "Hide"
+    # Buscar el item del menu con texto "Hide"
+    hide_selectors = [
+        "//span[contains(@class,'MuiListItemText-primary') and normalize-space()='Hide']",
+        "//li[contains(@class,'MuiMenuItem-root')]//span[normalize-space()='Hide']",
+        "//span[normalize-space()='Hide']",
+    ]
+    
+    hide_item = None
+    for xp in hide_selectors:
+        try:
+            hide_item = WebDriverWait(driver, timeout).until(
+                EC.element_to_be_clickable((By.XPATH, xp))
+            )
+            break
+        except Exception:
+            continue
+    
+    if hide_item is None:
+        raise TimeoutException("No se encontro la opcion 'Hide' en el menu")
+    
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", hide_item)
+    try:
+        hide_item.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", hide_item)
+    
+    # Esperar breve para que se aplique el cambio
+    time.sleep(0.3)
+    
+    return True

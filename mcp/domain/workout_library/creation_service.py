@@ -258,6 +258,41 @@ def click_workout_type_option(option_name: str, timeout: int = 10, exact: bool =
     raise Exception(f"No se pudo hacer clic en la opcion '{option_name}'.")
 
 
+def click_strength_modal_button(timeout: int = 10) -> bool:
+    """
+    Hace click en el boton de confirmacion del modal que aparece
+    al seleccionar Strength como tipo de workout.
+
+    TrainingPeaks muestra un modal adicional para workouts de fuerza
+    que requiere confirmacion antes de continuar con la creacion.
+
+    Args:
+        timeout: Segundos maximos de espera para el boton.
+
+    Returns:
+        True si el click se realizo correctamente.
+
+    Raises:
+        TimeoutException: Si el boton no aparece en el tiempo especificado.
+    """
+    driver = get_driver()
+
+    selector = "button.MuiButton-outlinedPrimary"
+
+    el = WebDriverWait(driver, timeout).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
+    )
+
+    driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+
+    try:
+        el.click()
+    except Exception:
+        driver.execute_script("arguments[0].click();", el)
+
+    return True
+
+
 def set_workout_description(text: str, timeout: int = 10, clear_first: bool = True) -> None:
     """
     Escribe en el campo Description (div#descriptionInput, contenteditable).
@@ -593,6 +628,13 @@ def create_workout(
             click_workout_type_option(workout_type)
         except Exception as e:
             return f"[ERROR] No se pudo seleccionar el tipo de workout '{workout_type}': {str(e)}"
+
+        # Para Strength: confirmar modal adicional de TrainingPeaks
+        if workout_type.lower() == "strength":
+            try:
+                click_strength_modal_button()
+            except Exception as e:
+                return f"[ERROR] No se pudo confirmar el modal de Strength: {str(e)}"
 
         # Descripcion
         if description is not None:
