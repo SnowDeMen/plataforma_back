@@ -17,6 +17,7 @@ from app.application.dto.plan_dto import (
     PlanProgressDTO,
     PlanListItemDTO,
     PlanApprovalDTO,
+    PlanApplyRequestDTO,
     AthleteInfoDTO,
     PlanModifyRequestDTO,
     PlanModifyResponseDTO,
@@ -210,6 +211,36 @@ async def approve_plan(
         return await use_cases.approve_plan(plan_id, dto)
     except PlanNotFoundException as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post(
+    "/{plan_id}/approve-and-apply",
+    response_model=TrainingPlanDTO,
+    summary="Aprobar y aplicar un plan de entrenamiento en TrainingPeaks (Selenium directo, sin MCP)"
+)
+async def approve_and_apply_plan(
+    plan_id: int,
+    dto: PlanApplyRequestDTO,
+    use_cases: PlanUseCases = Depends(get_plan_use_cases)
+) -> TrainingPlanDTO:
+    """
+    Aprueba y aplica un plan de entrenamiento a TrainingPeaks.
+
+    Reglas del flujo:
+    - NO usa MCP.
+    - Crea una sesión efímera de Selenium, hace login con cookies y selecciona atleta.
+    - Crea workouts en Workout Library y los arrastra al calendario en las fechas del plan.
+    - Si todo sale bien, marca el plan como 'applied'.
+    """
+    try:
+        return await use_cases.approve_and_apply_plan(plan_id, dto)
+    except PlanNotFoundException as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        # Evitamos exponer detalles internos del driver; el log ya captura el traceback.
+        raise HTTPException(status_code=500, detail="Error al aplicar el plan a TrainingPeaks")
 
 
 @router.post(

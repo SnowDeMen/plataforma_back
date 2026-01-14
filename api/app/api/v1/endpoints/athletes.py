@@ -16,6 +16,9 @@ from app.application.dto.athlete_dto import (
     AthleteCreateDTO
 )
 from app.api.v1.dependencies.use_case_deps import get_athlete_use_cases
+from app.infrastructure.database.session import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.infrastructure.repositories.athlete_repository import AthleteRepository
 
 
 router = APIRouter(prefix="/athletes", tags=["Athletes"])
@@ -86,6 +89,37 @@ async def get_athlete(
         return await use_cases.get_athlete(athlete_id)
     except AthleteNotFoundException as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@router.get(
+    "/{athlete_id}/training-history",
+    response_model=Dict[str, Any],
+    summary="Obtener historial sincronizado (training_history) de un atleta"
+)
+async def get_training_history(
+    athlete_id: str,
+    db: AsyncSession = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Retorna el documento JSON persistido en `AthleteModel.performance.training_history`.
+    
+    Nota:
+    - Este endpoint existe porque el DTO `AthleteDTO.performance` está tipado como
+      `PerformanceSummaryDTO` y no garantiza transportar llaves arbitrarias.
+    """
+    repo = AthleteRepository(db)
+    athlete = await repo.get_by_id(athlete_id)
+    if not athlete:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Atleta no encontrado")
+    
+    performance = athlete.performance if isinstance(athlete.performance, dict) else {}
+    training_history = performance.get("training_history") if isinstance(performance, dict) else None
+    
+    if not training_history:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Historial no disponible. Primero sincroniza el historial.")
+    
+    # Se retorna tal cual fue persistido.
+    return training_history
 
 
 @router.put(

@@ -11,6 +11,11 @@ from .chat_dto import (
     ChatSessionInfoDTO,
     ChatConfigUpdateDTO
 )
+from .training_history_dto import (
+    TrainingHistorySyncRequestDTO,
+    TrainingHistorySyncResponseDTO,
+    TrainingHistoryJobStatusDTO,
+)
 
 __all__ = [
     "AgentCreateDTO",
@@ -23,6 +28,9 @@ __all__ = [
     "ChatResponseDTO",
     "ChatHistoryDTO",
     "ChatSessionInfoDTO",
-    "ChatConfigUpdateDTO"
+    "ChatConfigUpdateDTO",
+    "TrainingHistorySyncRequestDTO",
+    "TrainingHistorySyncResponseDTO",
+    "TrainingHistoryJobStatusDTO",
 ]
 

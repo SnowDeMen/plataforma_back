@@ -538,19 +538,34 @@ def clickear_fecha_calendario(fecha: str) -> str:
 
 
 @mcp.tool()
-def obtener_datos_calendario(fecha: str, limit: int = None) -> Dict[str, Any]:
+def obtener_datos_calendario(
+    fecha: str,
+    limit: int = None,
+    use_today: bool = True,
+    timeout: int = 12
+) -> Dict[str, Any]:
     """
     Obtiene todos los workouts en el calendario en una fecha especifica.
     
     Args:
         fecha: Fecha en formato YYYY-MM-DD
         limit: Si se proporciona, limita el numero de workouts a obtener
+        use_today: Si True, reubica primero el calendario en \"Hoy\" (estado conocido). Default: True
+        timeout: Timeout (segundos) para abrir y extraer cada Quick View. Default: 12
         
     Returns:
         Dict con todos los workouts en el calendario
     """
     try:
-        workouts = get_all_quickviews_on_date(fecha, limit=limit)
+        # Nota: se mantienen defaults compatibles con el comportamiento anterior.
+        # Este flujo permite a los orquestadores (API) optimizar rendimiento
+        # evitando reubicar en \"Hoy\" en cada iteración masiva de fechas.
+        workouts = get_all_quickviews_on_date(
+            fecha,
+            use_today=use_today,
+            timeout=timeout,
+            limit=limit
+        )
         return workouts if workouts else {"error": "No se pudieron obtener los workouts"}
     except Exception as e:
         return {"error": f"Error: {str(e)}"}

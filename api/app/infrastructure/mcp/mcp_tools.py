@@ -44,6 +44,14 @@ class MCPToolsAdapter:
                         "limit": {
                             "type": "integer",
                             "description": "Limite de workouts a obtener. Si no se proporciona, obtiene todos."
+                        },
+                        "use_today": {
+                            "type": "boolean",
+                            "description": "Si True, reubica el calendario en 'Hoy' antes de navegar a la fecha. Default: True"
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Timeout (segundos) para abrir y extraer Quick Views. Default: 12"
                         }
                     },
                     "required": ["fecha"]

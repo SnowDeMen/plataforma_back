@@ -9,6 +9,7 @@ from app.application.use_cases.auth_use_cases import AuthUseCases
 from app.application.use_cases.session_use_cases import SessionUseCases
 from app.application.use_cases.chat_use_cases import ChatUseCases
 from app.application.use_cases.athlete_use_cases import AthleteUseCases
+from app.application.use_cases.training_history_use_cases import TrainingHistoryUseCases
 from app.domain.repositories.agent_repository import IAgentRepository
 from app.infrastructure.repositories.athlete_repository import AthleteRepository
 from app.api.v1.dependencies.repository_deps import get_agent_repository
@@ -42,6 +43,16 @@ def get_session_use_cases(
         SessionUseCases: Instancia de casos de uso de sesiones
     """
     return SessionUseCases(db)
+
+
+def get_training_history_use_cases() -> TrainingHistoryUseCases:
+    """
+    Dependencia para obtener los casos de uso de historial de entrenamientos.
+
+    Nota: este caso de uso administra jobs en memoria, por lo que no requiere
+    una sesión de DB request-scoped.
+    """
+    return TrainingHistoryUseCases()
 
 
 async def get_chat_use_cases(
