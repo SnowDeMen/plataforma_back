@@ -10,6 +10,9 @@ Uso:
 Este script es idempotente y puede ejecutarse multiples veces.
 En produccion, copiar el archivo data/athletes_seed.json al servidor
 y ejecutar este script.
+
+Nota: Campos desconocidos en el JSON (como 'personal', 'medica', 'deportiva')
+son filtrados automaticamente para compatibilidad con diferentes estructuras.
 """
 import asyncio
 import argparse
@@ -23,6 +26,54 @@ from loguru import logger
 
 # Configurar path para imports
 API_DIR = Path(__file__).parent.parent
+
+# Campos validos del modelo AthleteModel
+# Cualquier campo que no este en esta lista sera ignorado
+ATHLETE_MODEL_FIELDS = {
+    "id", "airtable_id", "created_at", "updated_at",
+    "airtable_last_modified", "synced_at", "is_deleted",
+    "name", "full_name", "last_name", "email", "tp_username", "tp_name", "status",
+    "discipline", "level", "goal", "age", "experience",
+    "consent", "date_of_birth", "gender", "country", "state", "city", "instagram",
+    "emergency_contact_name", "emergency_contact_phone",
+    "current_weight", "target_weight", "max_historical_weight", "height",
+    "diseases_conditions", "acute_injury_disease", "acute_injury_type",
+    "has_fractures_sprains_history", "fracture_history", "medications", "supplements",
+    "smoker", "alcohol_consumption", "daily_sleep_hours", "sleep_quality",
+    "meals_per_day", "diet_type", "diet_description",
+    "athlete_type", "disciplines_count", "previous_sports",
+    "running_experience_time", "cycling_experience_time", "swimming_experience_time",
+    "short_term_goal", "medium_term_goal", "long_term_goal",
+    "best_time_5k", "best_time_10k", "best_time_21k", "marathon_time",
+    "triathlon_distance", "triathlon_time", "triathlon_place",
+    "longest_run_distance", "longest_run_event", "longest_run_date",
+    "training_frequency_weekly", "training_hours_weekly", "preferred_schedule", "schedule",
+    "preferred_rest_day", "sacrifice_rest_day", "main_event", "event_type",
+    "time_to_event", "secondary_events",
+    "watch_brand_model", "has_watch", "watch_brand", "sensors_owned",
+    "has_pool_access", "has_smart_trainer",
+    "reason_for_sport", "annual_goals", "preferred_communication_channels",
+    "whatsapp_group_interest", "discount", "client_status",
+    "old_registration_date", "pending_payment", "form_link",
+    "weight_objective_category", "bad_habits_percentage",
+    "registration_date", "training_start_date",
+    "performance"
+}
+
+
+def filter_athlete_data(athlete_data: dict) -> dict:
+    """
+    Filtra los datos del atleta para incluir solo campos validos del modelo.
+    Esto permite que el script funcione con JSONs que tengan estructuras
+    diferentes (campos anidados como 'personal', 'medica', 'deportiva').
+    
+    Args:
+        athlete_data: Diccionario con datos del atleta (puede tener campos extras)
+        
+    Returns:
+        Diccionario con solo los campos validos para AthleteModel
+    """
+    return {k: v for k, v in athlete_data.items() if k in ATHLETE_MODEL_FIELDS}
 sys.path.insert(0, str(API_DIR))
 
 
@@ -100,23 +151,18 @@ async def seed_athletes(
                 result = await session.execute(query)
                 existing = result.scalar_one_or_none()
                 
+                # Filtrar datos para incluir solo campos validos del modelo
+                filtered_data = filter_athlete_data(athlete_data)
+                
                 if existing:
                     if force_update:
                         if dry_run:
                             logger.info(f"[DRY-RUN] Actualizaria: {athlete_name} (ID: {athlete_id})")
                         else:
-                            # Actualizar campos
-                            existing.name = athlete_data.get("name", existing.name)
-                            existing.age = athlete_data.get("age", existing.age)
-                            existing.discipline = athlete_data.get("discipline", existing.discipline)
-                            existing.level = athlete_data.get("level", existing.level)
-                            existing.goal = athlete_data.get("goal", existing.goal)
-                            existing.status = athlete_data.get("status", existing.status)
-                            existing.experience = athlete_data.get("experience", existing.experience)
-                            existing.personal = athlete_data.get("personal", existing.personal)
-                            existing.medica = athlete_data.get("medica", existing.medica)
-                            existing.deportiva = athlete_data.get("deportiva", existing.deportiva)
-                            existing.performance = athlete_data.get("performance", existing.performance)
+                            # Actualizar solo campos validos presentes en los datos
+                            for field, value in filtered_data.items():
+                                if field not in ("id", "created_at"):  # No sobrescribir estos
+                                    setattr(existing, field, value)
                             existing.updated_at = datetime.utcnow()
                             logger.debug(f"Actualizado: {athlete_name}")
                         stats["updated"] += 1
@@ -127,21 +173,11 @@ async def seed_athletes(
                     if dry_run:
                         logger.info(f"[DRY-RUN] Insertaria: {athlete_name} (ID: {athlete_id})")
                     else:
-                        # Crear nuevo atleta
-                        new_athlete = AthleteModel(
-                            id=athlete_id,
-                            name=athlete_data.get("name"),
-                            age=athlete_data.get("age"),
-                            discipline=athlete_data.get("discipline"),
-                            level=athlete_data.get("level"),
-                            goal=athlete_data.get("goal"),
-                            status=athlete_data.get("status", "Por generar"),
-                            experience=athlete_data.get("experience"),
-                            personal=athlete_data.get("personal"),
-                            medica=athlete_data.get("medica"),
-                            deportiva=athlete_data.get("deportiva"),
-                            performance=athlete_data.get("performance")
-                        )
+                        # Crear nuevo atleta con datos filtrados
+                        # Asegurar status por defecto
+                        if "status" not in filtered_data:
+                            filtered_data["status"] = "Por generar"
+                        new_athlete = AthleteModel(**filtered_data)
                         session.add(new_athlete)
                         logger.debug(f"Insertado: {athlete_name}")
                     stats["inserted"] += 1

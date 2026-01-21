@@ -177,6 +177,8 @@ class AthleteUseCases:
             goal=goal,
             status=athlete.status,
             experience=athlete.experience,
+            tp_username=athlete.tp_username,
+            tp_name=athlete.tp_name,
             personal=PersonalInfoDTO(
                 nombreCompleto=athlete.full_name,
                 genero=athlete.gender,
