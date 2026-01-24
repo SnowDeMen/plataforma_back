@@ -73,6 +73,15 @@ class Settings(BaseSettings):
     WORKOUTS_DIR: str = Field(default="workouts")
     DEFAULT_WORKOUT_LIBRARY: str = Field(default="Neuronomy")
     
+    # Airtable Sync
+    AIRTABLE_TOKEN: str = Field(default="")
+    AIRTABLE_BASE_ID: str = Field(default="")
+    AIRTABLE_TABLE_NAME: str = Field(default="")
+    AIRTABLE_LAST_MOD_FIELD: str = Field(default="")
+    AIRTABLE_SYNC_INTERVAL_HOURS: float = Field(default=12.0)
+    AIRTABLE_PG_SCHEMA: str = Field(default="airtable")
+    AIRTABLE_PG_TABLE: str = Field(default="")
+    
     # Logging
     LOG_LEVEL: str = Field(default="INFO")
     LOG_FILE: str = Field(default="logs/app.log")

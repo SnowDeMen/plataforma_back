@@ -71,7 +71,7 @@ def get_table_sync_config(
             target_schema="public",
             target_table="athletes",
             field_mappings=[
-                FieldMapping(airtable_field="Nombre completo", pg_column="full_name"),
+                FieldMapping(airtable_field="Nombre(s)", pg_column="full_name"),
                 FieldMapping(
                     airtable_field="Apellido(s)", 
                     pg_column="last_name",
@@ -172,7 +172,7 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="Estatus", pg_column="status"),
                 # Mapeos adicionales para unificar
                 FieldMapping(
-                    airtable_field="Nombre completo", 
+                    airtable_field="Nombre(s)", 
                     pg_column="name", 
                     required=True,
                     transform=lambda v: str(v).strip().title() if v else None
