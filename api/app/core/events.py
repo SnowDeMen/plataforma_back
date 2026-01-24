@@ -111,17 +111,15 @@ async def _setup_airtable_sync(app: FastAPI) -> None:
 
     scheduler = AsyncIOScheduler()
     
-    # Programar la tarea
+    # Programar la tarea periódica
     scheduler.add_job(
         _run_sync_task,
         trigger=IntervalTrigger(hours=settings.AIRTABLE_SYNC_INTERVAL_HOURS),
         id="airtable_sync",
-        replace_existing=True,
-        # Ejecutar inmediatamente al inicio
-        next_run_time=None if settings.is_development else None 
+        replace_existing=True
     )
     
-    # Para ejecutar una vez al inicio (opcional, pero util para validar)
+    # Para ejecutar una vez al inicio
     scheduler.add_job(_run_sync_task, id="airtable_sync_initial")
     
     scheduler.start()
