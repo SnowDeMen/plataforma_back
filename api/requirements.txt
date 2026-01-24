@@ -45,6 +45,9 @@ pytest-cov>=4.1.0
 # Logging y monitoreo
 loguru>=0.7.2
 
+# Tareas programadas
+apscheduler>=3.10.4
+
 # Validación adicional
 email-validator>=2.1.0
 
