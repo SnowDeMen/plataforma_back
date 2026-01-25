@@ -120,6 +120,10 @@ class AthleteModel(Base):
     email = Column(String, nullable=True)
     status = Column(String(50), default="Por generar", index=True)
     
+    # TrainingPeaks Integration
+    tp_username = Column(String, nullable=True)  # Cuenta TrainingPeaks (desde Airtable)
+    tp_name = Column(String, nullable=True)      # Nombre validado en TrainingPeaks
+    
     # Perfil Deportivo y Fisico
     discipline = Column(String(100), nullable=True)
     level = Column(String(100), nullable=True)

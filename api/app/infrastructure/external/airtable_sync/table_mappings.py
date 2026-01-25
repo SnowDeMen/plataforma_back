@@ -170,6 +170,8 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="Fecha de Registro", pg_column="registration_date"),
                 FieldMapping(airtable_field="Fecha de inicio de entrenamiento", pg_column="training_start_date"),
                 FieldMapping(airtable_field="Estatus", pg_column="status"),
+                # TrainingPeaks Integration
+                FieldMapping(airtable_field="Cuenta TrainingPeaks", pg_column="tp_username"),
                 # Mapeos adicionales para unificar
                 FieldMapping(
                     airtable_field="Nombre(s)", 
