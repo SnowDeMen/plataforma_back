@@ -10,8 +10,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.application.use_cases.session_use_cases import SessionUseCases
-from app.application.dto.session_dto import SessionStartDTO, SessionResponseDTO, TPSyncResultDTO
-from app.api.v1.dependencies.use_case_deps import get_session_use_cases
+from app.application.use_cases.tp_sync_use_cases import TPSyncUseCases
+from app.application.dto.session_dto import (
+    SessionStartDTO, 
+    SessionResponseDTO, 
+    TPSyncResultDTO,
+    TPSyncJobResponseDTO,
+    TPSyncJobStatusDTO,
+)
+from app.api.v1.dependencies.use_case_deps import get_session_use_cases, get_tp_sync_use_cases
 from app.infrastructure.database.session import get_db
 from app.infrastructure.repositories.chat_repository import ChatRepository
 from app.infrastructure.repositories.athlete_repository import AthleteRepository
@@ -341,135 +348,75 @@ async def restart_session(
 
 @router.post(
     "/sync-tp-username",
-    status_code=status.HTTP_200_OK,
-    summary="Sincronizar nombre de atleta desde TrainingPeaks"
+    response_model=TPSyncJobResponseDTO,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Iniciar sincronizacion de nombre de atleta desde TrainingPeaks"
 )
 async def sync_tp_username(
     username: str,
     athlete_id: str,
-    db: AsyncSession = Depends(get_db)
-) -> dict:
+    use_cases: TPSyncUseCases = Depends(get_tp_sync_use_cases),
+) -> TPSyncJobResponseDTO:
     """
-    Busca un atleta en TrainingPeaks por username y guarda su nombre (tp_name).
+    Inicia un job asincrono para buscar un atleta en TrainingPeaks por username.
     
-    Flujo:
-    1. Crea driver navegando a #home (en thread para no bloquear)
+    El endpoint retorna inmediatamente con un job_id. El frontend debe hacer
+    polling al endpoint GET /sync-tp-username/jobs/{job_id} para obtener el
+    estado y resultado final.
+    
+    Flujo del job en background:
+    1. Crea driver navegando a #home
     2. Hace login en TrainingPeaks
     3. Busca el atleta por username iterando por todos los grupos
-    4. Si lo encuentra, obtiene el nombre del atleta en TP (tp_name)
-    5. Guarda el nombre como tp_name en PostgreSQL
-    6. Actualiza el campo tp_name en Airtable
-    
-    Las operaciones de Selenium se ejecutan en threads separados via run_selenium()
-    para no bloquear el event loop y permitir que el healthcheck responda.
+    4. Si lo encuentra, guarda el tp_name en PostgreSQL y Airtable
     
     Args:
         username: Username de TrainingPeaks (tp_username)
         athlete_id: ID del atleta en la base de datos
-        db: Sesion de base de datos
+        use_cases: Casos de uso de sincronizacion TP (inyectado)
     
     Returns:
-        Dict con success, tp_name, group, message
+        TPSyncJobResponseDTO: Respuesta con job_id para polling
     """
-    from app.infrastructure.driver.services.auth_service import AuthService
-    from app.infrastructure.driver.services.athlete_service import AthleteService
-    from app.infrastructure.external.airtable_sync.airtable_client import (
-        AirtableClient, AirtableCredentials
-    )
-    import os
+    return await use_cases.start_sync(username=username, athlete_id=athlete_id)
+
+
+@router.get(
+    "/sync-tp-username/jobs/{job_id}",
+    response_model=TPSyncJobStatusDTO,
+    summary="Obtener estado de un job de sincronizacion TP (polling)"
+)
+async def get_tp_sync_job_status(
+    job_id: str,
+    use_cases: TPSyncUseCases = Depends(get_tp_sync_use_cases),
+) -> TPSyncJobStatusDTO:
+    """
+    Retorna el estado actual del job de sincronizacion.
     
-    driver = None
-    result = {
-        "success": False,
-        "message": "",
-        "username": username,
-        "tp_name": None,
-        "group": None
-    }
+    El frontend debe hacer polling a este endpoint cada 2 segundos hasta que
+    el status sea 'completed' o 'failed'.
     
+    Cuando status == 'completed':
+    - tp_name contiene el nombre encontrado en TrainingPeaks
+    - group contiene el grupo donde se encontro el atleta
+    
+    Cuando status == 'failed':
+    - error contiene el mensaje de error
+    
+    Args:
+        job_id: ID del job a consultar
+        use_cases: Casos de uso de sincronizacion TP (inyectado)
+        
+    Returns:
+        TPSyncJobStatusDTO: Estado actual del job
+        
+    Raises:
+        404: Si el job no existe
+    """
     try:
-        # 1. Crear driver navegando a #home (en thread para no bloquear)
-        logger.info(f"[sync-tp-username] Buscando atleta con username: {username}")
-        driver, wait = await run_selenium(DriverManager._create_driver_for_home)
-        
-        # Inicializar servicios
-        auth_service = AuthService(driver, wait)
-        athlete_service = AthleteService(driver, wait)
-        
-        # 2. Login en TrainingPeaks (en thread para no bloquear)
-        logger.info("[sync-tp-username] Haciendo login...")
-        await run_selenium(auth_service.login_with_cookie)
-        
-        # 3. Navegar a #home (en thread para no bloquear)
-        logger.info("[sync-tp-username] Navegando a #home...")
-        await run_selenium(athlete_service.navigate_to_home)
-        
-        # 4. Buscar por username (en thread para no bloquear)
-        search_result = await run_selenium(athlete_service.find_athlete_by_username, username)
-        
-        if not search_result["found"]:
-            result["message"] = f"No se encontro atleta con username: {username}"
-            return result
-        
-        tp_name = search_result["full_name"]
-        result["tp_name"] = tp_name
-        result["group"] = search_result["group"]
-        
-        # 5. Guardar en PostgreSQL
-        logger.info(f"[sync-tp-username] Guardando tp_name: {tp_name} para atleta {athlete_id}")
-        repo = AthleteRepository(db)
-        athlete = await repo.get_by_id(athlete_id)
-        
-        if not athlete:
-            result["message"] = f"Atleta no encontrado en DB: {athlete_id}"
-            return result
-        
-        # Actualizar tp_name en la base de datos
-        await repo.update(athlete_id, {"tp_name": tp_name})
-        await db.commit()
-        
-        # 6. Actualizar en Airtable (usando IDs directos)
-        airtable_record_id = athlete.id  # El ID del atleta es el record_id de Airtable
-        AIRTABLE_TABLE_ID = "tblMNRYRfYTWYpc5o"  # Table ID de Formulario_Inicial
-        TP_NAME_FIELD_ID = "fldmVrBQxHtlN4qXL"  # Field ID de tp_name
-        
-        try:
-            airtable_token = os.environ.get("AIRTABLE_TOKEN")
-            airtable_base_id = os.environ.get("AIRTABLE_BASE_ID")
-            
-            if airtable_token and airtable_base_id:
-                client = AirtableClient(
-                    AirtableCredentials(token=airtable_token, base_id=airtable_base_id)
-                )
-                logger.info(f"[sync-tp-username] Actualizando Airtable: table={AIRTABLE_TABLE_ID}, record={airtable_record_id}")
-                client.update_record(
-                    table_name=AIRTABLE_TABLE_ID,
-                    record_id=airtable_record_id,
-                    fields={TP_NAME_FIELD_ID: tp_name}
-                )
-                logger.info(f"[sync-tp-username] Airtable actualizado exitosamente: {airtable_record_id} -> {tp_name}")
-            else:
-                logger.warning("[sync-tp-username] Credenciales de Airtable no configuradas")
-        except Exception as e:
-            logger.exception(f"[sync-tp-username] Error actualizando Airtable: {e}")
-            # No fallar el endpoint si Airtable falla
-        
-        result["success"] = True
-        result["message"] = f"Sincronizado exitosamente: {tp_name}"
-        logger.info(f"[sync-tp-username] Exito: {username} -> {tp_name}")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception(f"[sync-tp-username] Error: {e}")
-        result["message"] = f"Error: {str(e)}"
-        return result
-        
-    finally:
-        # Cerrar driver (en thread para no bloquear)
-        if driver:
-            try:
-                await run_selenium(driver.quit)
-                logger.info("[sync-tp-username] Driver cerrado")
-            except Exception:
-                pass
+        return await use_cases.get_job_status(job_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Job no encontrado"
+        )
