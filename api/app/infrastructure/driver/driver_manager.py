@@ -160,13 +160,16 @@ class DriverManager:
     @classmethod
     def initialize_training_session(cls, athlete_name: str, session_id: Optional[str] = None) -> "DriverSession":
         """
-        Inicializa una sesion completa de entrenamiento.
+        Inicializa una sesion completa de entrenamiento (sincrono).
         
         Realiza el flujo completo:
         1. Crea el driver y abre TrainingPeaks
         2. Hace login con cookies
         3. Selecciona el atleta
         4. Abre la Workout Library
+        
+        NOTA: Esta version es sincrona y bloquea el event loop.
+        Para uso en contextos async, usar initialize_training_session_async().
         
         Args:
             athlete_name: Nombre del atleta a seleccionar
@@ -198,6 +201,58 @@ class DriverManager:
             import traceback
             error_msg = str(e) if str(e) else f"Exception type: {type(e).__name__}"
             logger.error(f"Error durante inicializacion de sesion: {error_msg}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            # Cerrar sesion en caso de error
+            cls.close_session(session.session_id)
+            raise
+    
+    @classmethod
+    async def initialize_training_session_async(cls, athlete_name: str, session_id: Optional[str] = None) -> "DriverSession":
+        """
+        Inicializa una sesion completa de entrenamiento (asincrono, no bloquea).
+        
+        Version async que ejecuta las operaciones de Selenium en threads separados
+        via run_selenium() para no bloquear el event loop. Esto permite que el
+        healthcheck y otras requests respondan durante la inicializacion.
+        
+        Realiza el flujo completo:
+        1. Crea el driver y abre TrainingPeaks (en thread)
+        2. Hace login con cookies (en thread)
+        3. Selecciona el atleta (en thread)
+        4. Abre la Workout Library (en thread)
+        
+        Args:
+            athlete_name: Nombre del atleta a seleccionar
+            session_id: ID de sesion opcional
+            
+        Returns:
+            DriverSession: La sesion inicializada y lista para usar
+        """
+        from app.infrastructure.driver.selenium_executor import run_selenium
+        
+        # Crear sesion basica en thread (incluye crear driver)
+        session = await run_selenium(cls.create_session, athlete_name, session_id)
+        
+        try:
+            # Login en TrainingPeaks (en thread)
+            logger.info("Iniciando login en TrainingPeaks (async)...")
+            await run_selenium(session.auth_service.login_with_cookie)
+            
+            # Seleccionar atleta (en thread)
+            logger.info(f"Seleccionando atleta: {athlete_name} (async)...")
+            await run_selenium(session.athlete_service.select_athlete, athlete_name)
+            
+            # Abrir Workout Library (en thread)
+            logger.info("Abriendo Workout Library (async)...")
+            await run_selenium(session.workout_service.workout_library)
+            
+            logger.info(f"Sesion de entrenamiento inicializada (async) para: {athlete_name}")
+            return session
+            
+        except Exception as e:
+            import traceback
+            error_msg = str(e) if str(e) else f"Exception type: {type(e).__name__}"
+            logger.error(f"Error durante inicializacion de sesion (async): {error_msg}")
             logger.error(f"Traceback: {traceback.format_exc()}")
             # Cerrar sesion en caso de error
             cls.close_session(session.session_id)

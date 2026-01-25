@@ -3,17 +3,21 @@ Endpoints para operaciones con sesiones de entrenamiento.
 Maneja la creacion, consulta y cierre de sesiones con drivers de Selenium.
 Incluye inicializacion automatica del MCP y agente de chat.
 """
-from fastapi import APIRouter, Depends, status
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.application.use_cases.session_use_cases import SessionUseCases
-from app.application.dto.session_dto import SessionStartDTO, SessionResponseDTO
+from app.application.dto.session_dto import SessionStartDTO, SessionResponseDTO, TPSyncResultDTO
 from app.api.v1.dependencies.use_case_deps import get_session_use_cases
 from app.infrastructure.database.session import get_db
 from app.infrastructure.repositories.chat_repository import ChatRepository
+from app.infrastructure.repositories.athlete_repository import AthleteRepository
 from app.infrastructure.autogen.chat_manager import ChatManager
 from app.infrastructure.driver.driver_manager import DriverManager
+from app.infrastructure.driver.selenium_executor import run_selenium
 from app.infrastructure.mcp.mcp_server_manager import MCPServerManager
 from app.shared.utils.audit_logger import AuditLogger
 
@@ -333,3 +337,154 @@ async def restart_session(
     session_response.message = f"Sesion reiniciada correctamente. MCP: {'Activo' if mcp_initialized else 'Inactivo'}"
     
     return session_response
+
+
+@router.post(
+    "/sync-tp-username",
+    response_model=TPSyncResultDTO,
+    status_code=status.HTTP_200_OK,
+    summary="Sincronizar atleta con TrainingPeaks"
+)
+async def sync_tp_username(
+    username: str = Query(..., description="Nombre/username del atleta en TrainingPeaks"),
+    athlete_id: str = Query(..., description="ID del atleta en la base de datos"),
+    db: AsyncSession = Depends(get_db)
+) -> TPSyncResultDTO:
+    """
+    Sincroniza un atleta verificando que existe en TrainingPeaks.
+    
+    El proceso:
+    1. Crea un driver de Selenium efimero (en thread separado para no bloquear)
+    2. Hace login en TrainingPeaks
+    3. Busca al atleta por el nombre proporcionado
+    4. Si lo encuentra, guarda el nombre de TrainingPeaks en la base de datos
+    5. Cierra el driver
+    
+    Las operaciones de Selenium se ejecutan en threads separados via run_selenium()
+    para no bloquear el event loop y permitir que el healthcheck responda.
+    
+    Args:
+        username: Nombre/username del atleta a buscar en TrainingPeaks
+        athlete_id: ID del atleta en la base de datos local
+        db: Sesion de base de datos (inyectado)
+        
+    Returns:
+        TPSyncResultDTO: Resultado de la sincronizacion
+    """
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.common.exceptions import TimeoutException
+    
+    from app.core.config import settings
+    from app.infrastructure.driver.driver_manager import TRAININGPEAKS_URL
+    from app.infrastructure.driver.services.auth_service import AuthService
+    from app.infrastructure.driver.services.athlete_service import AthleteService
+    from app.shared.exceptions.domain import AthleteNotFoundInTPException
+    
+    logger.info(f"Iniciando sincronizacion TP para atleta_id={athlete_id}, username={username}")
+    
+    # Verificar que el atleta existe en la base de datos
+    repo = AthleteRepository(db)
+    athlete = await repo.get_by_id(athlete_id)
+    if athlete is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Atleta no encontrado: {athlete_id}"
+        )
+    
+    def create_ephemeral_driver() -> tuple[webdriver.Chrome, WebDriverWait]:
+        """Crea un driver efimero para la sincronizacion."""
+        opts = Options()
+        if settings.SELENIUM_HEADLESS:
+            opts.add_argument("--headless=new")
+        opts.add_argument("--no-sandbox")
+        opts.add_argument("--disable-dev-shm-usage")
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--window-size=1920,1080")
+        opts.add_argument("--disable-extensions")
+        opts.add_argument("--disable-infobars")
+        driver = webdriver.Chrome(options=opts)
+        wait = WebDriverWait(driver, 10)
+        driver.get(TRAININGPEAKS_URL)
+        return driver, wait
+    
+    driver: Optional[webdriver.Chrome] = None
+    found_name: Optional[str] = None
+    found_group: Optional[str] = None
+    
+    try:
+        # Crear driver en thread separado
+        driver, wait = await run_selenium(create_ephemeral_driver)
+        
+        # Login en thread separado
+        auth_service = AuthService(driver, wait)
+        await run_selenium(auth_service.login_with_cookie)
+        
+        # Buscar atleta en thread separado
+        athlete_service = AthleteService(driver, wait)
+        try:
+            await run_selenium(athlete_service.select_athlete, username)
+            # Si llegamos aqui, el atleta fue encontrado y seleccionado
+            found_name = username
+            logger.info(f"Atleta encontrado en TrainingPeaks: {username}")
+        except AthleteNotFoundInTPException as e:
+            logger.warning(f"Atleta no encontrado en TrainingPeaks: {username}. Intentos: {e.variations}")
+            return TPSyncResultDTO(
+                success=False,
+                username=username,
+                tp_name=None,
+                group=None,
+                message=f"No se encontro el atleta '{username}' en TrainingPeaks"
+            )
+        except TimeoutException:
+            logger.warning(f"Timeout buscando atleta en TrainingPeaks: {username}")
+            return TPSyncResultDTO(
+                success=False,
+                username=username,
+                tp_name=None,
+                group=None,
+                message=f"Timeout buscando el atleta '{username}' en TrainingPeaks"
+            )
+        
+        # Guardar el resultado en la base de datos (en el campo performance)
+        current_perf = athlete.performance if isinstance(athlete.performance, dict) else {}
+        if current_perf is None:
+            current_perf = {}
+        
+        current_perf["tp_sync"] = {
+            "tp_username": username,
+            "tp_name": found_name,
+            "synced_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+        }
+        
+        await repo.update(athlete_id, {"performance": current_perf})
+        await db.commit()
+        
+        logger.info(f"Sincronizacion TP completada para atleta_id={athlete_id}")
+        
+        return TPSyncResultDTO(
+            success=True,
+            username=username,
+            tp_name=found_name,
+            group=found_group,
+            message=f"Atleta '{found_name}' sincronizado correctamente con TrainingPeaks"
+        )
+        
+    except Exception as e:
+        logger.exception(f"Error en sincronizacion TP: {e}")
+        return TPSyncResultDTO(
+            success=False,
+            username=username,
+            tp_name=None,
+            group=None,
+            message=f"Error durante la sincronizacion: {str(e)}"
+        )
+        
+    finally:
+        # Cerrar driver en thread separado
+        if driver is not None:
+            try:
+                await run_selenium(driver.quit)
+            except Exception as e:
+                logger.warning(f"Error cerrando driver efimero: {e}")

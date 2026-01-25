@@ -78,8 +78,8 @@ class SessionUseCases:
         
         logger.info(f"Iniciando sesion para atleta valido: {target_athlete_name}")
         
-        # Inicializar sesion completa de entrenamiento
-        session = DriverManager.initialize_training_session(target_athlete_name)
+        # Inicializar sesion completa de entrenamiento (version async para no bloquear)
+        session = await DriverManager.initialize_training_session_async(target_athlete_name)
         
         # Retrieve athlete.id safely
         athlete_id = getattr(athlete, 'id', None)
@@ -165,8 +165,8 @@ class SessionUseCases:
         # Cerrar driver anterior si existe
         DriverManager.close_session(session_id)
         
-        # Inicializar nuevo driver mantendo el ID
-        driver_session = DriverManager.initialize_training_session(
+        # Inicializar nuevo driver mantendo el ID (version async para no bloquear)
+        driver_session = await DriverManager.initialize_training_session_async(
             athlete_name=session.athlete_name, 
             session_id=session_id
         )

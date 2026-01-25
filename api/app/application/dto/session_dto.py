@@ -43,3 +43,18 @@ class SessionResponseDTO(BaseModel):
         """Configuración de Pydantic."""
         from_attributes = True
 
+
+class TPSyncResultDTO(BaseModel):
+    """
+    DTO para el resultado de sincronizacion de atleta con TrainingPeaks.
+    
+    Se usa para verificar que un atleta existe en TrainingPeaks
+    y obtener su nombre de display.
+    """
+    
+    success: bool = Field(..., description="Indica si la sincronizacion fue exitosa")
+    username: Optional[str] = Field(None, description="Username/nombre buscado en TrainingPeaks")
+    tp_name: Optional[str] = Field(None, description="Nombre del atleta encontrado en TrainingPeaks")
+    group: Optional[str] = Field(None, description="Grupo/carpeta donde se encontro el atleta")
+    message: Optional[str] = Field(None, description="Mensaje descriptivo del resultado")
+
