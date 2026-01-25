@@ -341,151 +341,135 @@ async def restart_session(
 
 @router.post(
     "/sync-tp-username",
-    response_model=TPSyncResultDTO,
     status_code=status.HTTP_200_OK,
-    summary="Sincronizar atleta con TrainingPeaks"
+    summary="Sincronizar nombre de atleta desde TrainingPeaks"
 )
 async def sync_tp_username(
-    username: str = Query(..., description="Nombre/username del atleta en TrainingPeaks"),
-    athlete_id: str = Query(..., description="ID del atleta en la base de datos"),
+    username: str,
+    athlete_id: str,
     db: AsyncSession = Depends(get_db)
-) -> TPSyncResultDTO:
+) -> dict:
     """
-    Sincroniza un atleta verificando que existe en TrainingPeaks.
+    Busca un atleta en TrainingPeaks por username y guarda su nombre (tp_name).
     
-    El proceso:
-    1. Crea un driver de Selenium efimero (en thread separado para no bloquear)
+    Flujo:
+    1. Crea driver navegando a #home (en thread para no bloquear)
     2. Hace login en TrainingPeaks
-    3. Busca al atleta por el nombre proporcionado
-    4. Si lo encuentra, guarda el nombre de TrainingPeaks en la base de datos
-    5. Cierra el driver
+    3. Busca el atleta por username iterando por todos los grupos
+    4. Si lo encuentra, obtiene el nombre del atleta en TP (tp_name)
+    5. Guarda el nombre como tp_name en PostgreSQL
+    6. Actualiza el campo tp_name en Airtable
     
     Las operaciones de Selenium se ejecutan en threads separados via run_selenium()
     para no bloquear el event loop y permitir que el healthcheck responda.
     
     Args:
-        username: Nombre/username del atleta a buscar en TrainingPeaks
-        athlete_id: ID del atleta en la base de datos local
-        db: Sesion de base de datos (inyectado)
-        
-    Returns:
-        TPSyncResultDTO: Resultado de la sincronizacion
-    """
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.support.ui import WebDriverWait
-    from selenium.common.exceptions import TimeoutException
+        username: Username de TrainingPeaks (tp_username)
+        athlete_id: ID del atleta en la base de datos
+        db: Sesion de base de datos
     
-    from app.core.config import settings
-    from app.infrastructure.driver.driver_manager import TRAININGPEAKS_URL
+    Returns:
+        Dict con success, tp_name, group, message
+    """
     from app.infrastructure.driver.services.auth_service import AuthService
     from app.infrastructure.driver.services.athlete_service import AthleteService
-    from app.shared.exceptions.domain import AthleteNotFoundInTPException
+    from app.infrastructure.external.airtable_sync.airtable_client import (
+        AirtableClient, AirtableCredentials
+    )
+    import os
     
-    logger.info(f"Iniciando sincronizacion TP para atleta_id={athlete_id}, username={username}")
-    
-    # Verificar que el atleta existe en la base de datos
-    repo = AthleteRepository(db)
-    athlete = await repo.get_by_id(athlete_id)
-    if athlete is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Atleta no encontrado: {athlete_id}"
-        )
-    
-    def create_ephemeral_driver() -> tuple[webdriver.Chrome, WebDriverWait]:
-        """Crea un driver efimero para la sincronizacion."""
-        opts = Options()
-        if settings.SELENIUM_HEADLESS:
-            opts.add_argument("--headless=new")
-        opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-dev-shm-usage")
-        opts.add_argument("--disable-gpu")
-        opts.add_argument("--window-size=1920,1080")
-        opts.add_argument("--disable-extensions")
-        opts.add_argument("--disable-infobars")
-        driver = webdriver.Chrome(options=opts)
-        wait = WebDriverWait(driver, 10)
-        driver.get(TRAININGPEAKS_URL)
-        return driver, wait
-    
-    driver: Optional[webdriver.Chrome] = None
-    found_name: Optional[str] = None
-    found_group: Optional[str] = None
+    driver = None
+    result = {
+        "success": False,
+        "message": "",
+        "username": username,
+        "tp_name": None,
+        "group": None
+    }
     
     try:
-        # Crear driver en thread separado
-        driver, wait = await run_selenium(create_ephemeral_driver)
+        # 1. Crear driver navegando a #home (en thread para no bloquear)
+        logger.info(f"[sync-tp-username] Buscando atleta con username: {username}")
+        driver, wait = await run_selenium(DriverManager._create_driver_for_home)
         
-        # Login en thread separado
+        # Inicializar servicios
         auth_service = AuthService(driver, wait)
+        athlete_service = AthleteService(driver, wait)
+        
+        # 2. Login en TrainingPeaks (en thread para no bloquear)
+        logger.info("[sync-tp-username] Haciendo login...")
         await run_selenium(auth_service.login_with_cookie)
         
-        # Buscar atleta en thread separado
-        athlete_service = AthleteService(driver, wait)
-        try:
-            await run_selenium(athlete_service.select_athlete, username)
-            # Si llegamos aqui, el atleta fue encontrado y seleccionado
-            found_name = username
-            logger.info(f"Atleta encontrado en TrainingPeaks: {username}")
-        except AthleteNotFoundInTPException as e:
-            attempts = e.details.get("attempted_variations", [])
-            logger.warning(f"Atleta no encontrado en TrainingPeaks: {username}. Intentos: {attempts}")
-            return TPSyncResultDTO(
-                success=False,
-                username=username,
-                tp_name=None,
-                group=None,
-                message=f"No se encontro el atleta '{username}' en TrainingPeaks"
-            )
-        except TimeoutException:
-            logger.warning(f"Timeout buscando atleta en TrainingPeaks: {username}")
-            return TPSyncResultDTO(
-                success=False,
-                username=username,
-                tp_name=None,
-                group=None,
-                message=f"Timeout buscando el atleta '{username}' en TrainingPeaks"
-            )
+        # 3. Navegar a #home (en thread para no bloquear)
+        logger.info("[sync-tp-username] Navegando a #home...")
+        await run_selenium(athlete_service.navigate_to_home)
         
-        # Guardar el resultado en la base de datos (en el campo performance)
-        current_perf = athlete.performance if isinstance(athlete.performance, dict) else {}
-        if current_perf is None:
-            current_perf = {}
+        # 4. Buscar por username (en thread para no bloquear)
+        search_result = await run_selenium(athlete_service.find_athlete_by_username, username)
         
-        current_perf["tp_sync"] = {
-            "tp_username": username,
-            "tp_name": found_name,
-            "synced_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-        }
+        if not search_result["found"]:
+            result["message"] = f"No se encontro atleta con username: {username}"
+            return result
         
-        await repo.update(athlete_id, {"performance": current_perf})
+        tp_name = search_result["full_name"]
+        result["tp_name"] = tp_name
+        result["group"] = search_result["group"]
+        
+        # 5. Guardar en PostgreSQL
+        logger.info(f"[sync-tp-username] Guardando tp_name: {tp_name} para atleta {athlete_id}")
+        repo = AthleteRepository(db)
+        athlete = await repo.get_by_id(athlete_id)
+        
+        if not athlete:
+            result["message"] = f"Atleta no encontrado en DB: {athlete_id}"
+            return result
+        
+        # Actualizar tp_name en la base de datos
+        await repo.update(athlete_id, {"tp_name": tp_name})
         await db.commit()
         
-        logger.info(f"Sincronizacion TP completada para atleta_id={athlete_id}")
+        # 6. Actualizar en Airtable (usando IDs directos)
+        airtable_record_id = athlete.id  # El ID del atleta es el record_id de Airtable
+        AIRTABLE_TABLE_ID = "tblMNRYRfYTWYpc5o"  # Table ID de Formulario_Inicial
+        TP_NAME_FIELD_ID = "fldmVrBQxHtlN4qXL"  # Field ID de tp_name
         
-        return TPSyncResultDTO(
-            success=True,
-            username=username,
-            tp_name=found_name,
-            group=found_group,
-            message=f"Atleta '{found_name}' sincronizado correctamente con TrainingPeaks"
-        )
+        try:
+            airtable_token = os.environ.get("AIRTABLE_TOKEN")
+            airtable_base_id = os.environ.get("AIRTABLE_BASE_ID")
+            
+            if airtable_token and airtable_base_id:
+                client = AirtableClient(
+                    AirtableCredentials(token=airtable_token, base_id=airtable_base_id)
+                )
+                logger.info(f"[sync-tp-username] Actualizando Airtable: table={AIRTABLE_TABLE_ID}, record={airtable_record_id}")
+                client.update_record(
+                    table_name=AIRTABLE_TABLE_ID,
+                    record_id=airtable_record_id,
+                    fields={TP_NAME_FIELD_ID: tp_name}
+                )
+                logger.info(f"[sync-tp-username] Airtable actualizado exitosamente: {airtable_record_id} -> {tp_name}")
+            else:
+                logger.warning("[sync-tp-username] Credenciales de Airtable no configuradas")
+        except Exception as e:
+            logger.exception(f"[sync-tp-username] Error actualizando Airtable: {e}")
+            # No fallar el endpoint si Airtable falla
+        
+        result["success"] = True
+        result["message"] = f"Sincronizado exitosamente: {tp_name}"
+        logger.info(f"[sync-tp-username] Exito: {username} -> {tp_name}")
+        
+        return result
         
     except Exception as e:
-        logger.exception(f"Error en sincronizacion TP: {e}")
-        return TPSyncResultDTO(
-            success=False,
-            username=username,
-            tp_name=None,
-            group=None,
-            message=f"Error durante la sincronizacion: {str(e)}"
-        )
+        logger.exception(f"[sync-tp-username] Error: {e}")
+        result["message"] = f"Error: {str(e)}"
+        return result
         
     finally:
-        # Cerrar driver en thread separado
-        if driver is not None:
+        # Cerrar driver (en thread para no bloquear)
+        if driver:
             try:
                 await run_selenium(driver.quit)
-            except Exception as e:
-                logger.warning(f"Error cerrando driver efimero: {e}")
+                logger.info("[sync-tp-username] Driver cerrado")
+            except Exception:
+                pass

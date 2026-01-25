@@ -21,8 +21,9 @@ from app.infrastructure.driver.services.athlete_service import AthleteService
 from app.infrastructure.driver.services.workout_service import WorkoutService
 
 
-# URL base de TrainingPeaks
+# URLs de TrainingPeaks
 TRAININGPEAKS_URL = "https://app.trainingpeaks.com/#calendar"
+TRAININGPEAKS_HOME_URL = "https://app.trainingpeaks.com/#home"
 
 
 class DriverSession:
@@ -154,6 +155,43 @@ class DriverManager:
         # Abrir TrainingPeaks
         driver.get(TRAININGPEAKS_URL)
         logger.info(f"Navegador abierto en: {TRAININGPEAKS_URL}")
+        
+        return driver, wait
+    
+    @classmethod
+    def _create_driver_for_home(cls) -> tuple[webdriver.Chrome, WebDriverWait]:
+        """
+        Crea e inicializa un nuevo WebDriver de Chrome navegando a #home.
+        
+        Similar a _create_driver() pero navega a la pagina de inicio (#home)
+        en lugar del calendario. Util para operaciones que requieren acceso
+        a la lista de atletas sin seleccionar uno especifico.
+        
+        Returns:
+            tuple: (WebDriver, WebDriverWait)
+        """
+        opts = Options()
+        
+        if settings.SELENIUM_HEADLESS:
+            opts.add_argument("--headless=new")
+            logger.info("Chrome iniciando en modo headless (home)")
+        else:
+            logger.info("Chrome iniciando con GUI para #home")
+        
+        opts.add_argument("--no-sandbox")
+        opts.add_argument("--disable-dev-shm-usage")
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--window-size=1920,1080")
+        opts.add_argument("--disable-extensions")
+        opts.add_argument("--disable-infobars")
+        opts.add_argument("--remote-debugging-port=9222")
+        
+        driver = webdriver.Chrome(options=opts)
+        wait = WebDriverWait(driver, 10)
+        
+        # Abrir TrainingPeaks Home
+        driver.get(TRAININGPEAKS_HOME_URL)
+        logger.info(f"Navegador abierto en: {TRAININGPEAKS_HOME_URL}")
         
         return driver, wait
     
