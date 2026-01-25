@@ -429,7 +429,8 @@ async def sync_tp_username(
             found_name = username
             logger.info(f"Atleta encontrado en TrainingPeaks: {username}")
         except AthleteNotFoundInTPException as e:
-            logger.warning(f"Atleta no encontrado en TrainingPeaks: {username}. Intentos: {e.variations}")
+            attempts = e.details.get("attempted_variations", [])
+            logger.warning(f"Atleta no encontrado en TrainingPeaks: {username}. Intentos: {attempts}")
             return TPSyncResultDTO(
                 success=False,
                 username=username,
