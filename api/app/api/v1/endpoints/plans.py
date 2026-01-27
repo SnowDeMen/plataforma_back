@@ -21,7 +21,9 @@ from app.application.dto.plan_dto import (
     AthleteInfoDTO,
     PlanModifyRequestDTO,
     PlanModifyResponseDTO,
-    PlanModificationHistoryDTO
+    PlanModificationHistoryDTO,
+    ApplyTPPlanRequestDTO,
+    ApplyTPPlanResponseDTO
 )
 from app.infrastructure.database.session import get_db
 from app.infrastructure.repositories.plan_repository import PlanRepository
@@ -438,3 +440,46 @@ async def get_plan_history(
         return await use_cases.get_modification_history(plan_id)
     except PlanNotFoundException as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post(
+    "/apply-tp-plan",
+    response_model=ApplyTPPlanResponseDTO,
+    status_code=status.HTTP_200_OK,
+    summary="Aplicar un Training Plan existente de TrainingPeaks a un atleta"
+)
+async def apply_tp_plan(
+    dto: ApplyTPPlanRequestDTO,
+    use_cases: PlanUseCases = Depends(get_plan_use_cases)
+) -> ApplyTPPlanResponseDTO:
+    """
+    Aplica un Training Plan existente en TrainingPeaks a un atleta.
+    
+    Este endpoint es para testing del flujo de Selenium que ejecuta
+    el TrainingPlanService.apply_training_plan().
+    
+    Flujo:
+    1. Crea sesion de Selenium efimera
+    2. Login con cookies
+    3. Abre Workout Library
+    4. Ejecuta el flujo de aplicar Training Plan
+    5. Cierra sesion
+    
+    Args:
+        dto: Datos del plan a aplicar (nombre, atleta, fecha)
+        use_cases: Casos de uso (inyectado)
+        
+    Returns:
+        ApplyTPPlanResponseDTO con el resultado de la operacion
+    """
+    try:
+        return await use_cases.apply_tp_plan(dto)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        from loguru import logger
+        logger.error(f"Error aplicando TP Plan: {e}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error al aplicar el Training Plan: {str(e)}"
+        )

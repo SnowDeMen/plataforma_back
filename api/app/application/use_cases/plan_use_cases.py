@@ -24,7 +24,9 @@ from app.application.dto.plan_dto import (
     SafeAlternativeDTO,
     SafeAlternativeWorkoutDTO,
     PlanModificationHistoryDTO,
-    ModificationHistoryEntryDTO
+    ModificationHistoryEntryDTO,
+    ApplyTPPlanRequestDTO,
+    ApplyTPPlanResponseDTO
 )
 from app.infrastructure.repositories.plan_repository import PlanRepository
 from app.infrastructure.autogen.plan_generator import PlanGenerator
@@ -899,4 +901,93 @@ class PlanUseCases:
             workout_count=workout_count,
             created_at=plan.created_at
         )
+    
+    async def apply_tp_plan(
+        self, 
+        dto: ApplyTPPlanRequestDTO
+    ) -> ApplyTPPlanResponseDTO:
+        """
+        Aplica un Training Plan existente de TrainingPeaks a un atleta.
+        
+        Este metodo es para testing del flujo de Selenium que ejecuta
+        el TrainingPlanService.apply_training_plan().
+        
+        Flujo:
+        1. Crea sesion de Selenium efimera
+        2. Login con cookies
+        3. Abre Workout Library
+        4. Ejecuta el flujo de aplicar Training Plan
+        5. Cierra sesion
+        
+        Args:
+            dto: Datos del plan a aplicar (nombre, atleta, fecha)
+            
+        Returns:
+            ApplyTPPlanResponseDTO con el resultado de la operacion
+        """
+        from app.infrastructure.driver.driver_manager import DriverManager
+        from app.infrastructure.driver.selenium_executor import run_selenium
+        
+        session = None
+        
+        try:
+            logger.info(
+                f"Aplicando TP Plan '{dto.plan_name}' a '{dto.athlete_name}' "
+                f"desde {dto.start_date.isoformat()}"
+            )
+            
+            # 1. Crear sesion de Selenium efimera
+            session = await run_selenium(
+                DriverManager.create_session, 
+                dto.athlete_name
+            )
+            
+            # 2. Login con cookies
+            logger.info("Login en TrainingPeaks...")
+            await run_selenium(session.auth_service.login_with_cookie)
+            
+            # 3. Abrir Workout Library (para tener el panel activo)
+            logger.info("Abriendo Workout Library...")
+            await run_selenium(session.workout_service.workout_library)
+            
+            # 4. Aplicar el Training Plan usando el servicio
+            logger.info(f"Aplicando Training Plan: {dto.plan_name}")
+            await run_selenium(
+                session.training_plan_service.apply_training_plan,
+                dto.plan_name,
+                dto.athlete_name,
+                dto.start_date
+            )
+            
+            logger.info(
+                f"Training Plan '{dto.plan_name}' aplicado exitosamente "
+                f"a '{dto.athlete_name}'"
+            )
+            
+            return ApplyTPPlanResponseDTO(
+                success=True,
+                message=f"Plan '{dto.plan_name}' aplicado exitosamente",
+                plan_name=dto.plan_name,
+                athlete_name=dto.athlete_name,
+                start_date=dto.start_date.isoformat()
+            )
+            
+        except Exception as e:
+            logger.error(f"Error aplicando TP Plan: {e}")
+            return ApplyTPPlanResponseDTO(
+                success=False,
+                message=f"Error: {str(e)}",
+                plan_name=dto.plan_name,
+                athlete_name=dto.athlete_name,
+                start_date=dto.start_date.isoformat()
+            )
+            
+        finally:
+            # 5. Cerrar sesion
+            if session:
+                try:
+                    DriverManager.close_session(session.session_id)
+                    logger.info("Sesion de Selenium cerrada")
+                except Exception as e:
+                    logger.warning(f"Error cerrando sesion: {e}")
 

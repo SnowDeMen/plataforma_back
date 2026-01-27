@@ -13,8 +13,29 @@ Patrón sugerido:
 
 from __future__ import annotations
 
+from datetime import date
+from typing import Any
+
 from .sync_config import TableSyncConfig
 from .types import FieldMapping
+
+
+def _parse_iso_date(value: Any) -> date | None:
+    """
+    Parsea una fecha ISO 8601 (YYYY-MM-DD) a objeto date.
+    
+    Args:
+        value: Valor del campo de Airtable (string ISO 8601 o None)
+        
+    Returns:
+        date si el parsing es exitoso, None si el valor es vacio o invalido
+    """
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
 
 
 def get_table_sync_config(
@@ -172,7 +193,11 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="Categoria Objetivo Peso", pg_column="weight_objective_category"),
                 FieldMapping(airtable_field="% Malos Habitos", pg_column="bad_habits_percentage", transform=lambda v: str(v) if v else None),
                 FieldMapping(airtable_field="Fecha de Registro", pg_column="registration_date"),
-                FieldMapping(airtable_field="Fecha de inicio de entrenamiento", pg_column="training_start_date"),
+                FieldMapping(
+                    airtable_field="Fecha de inicio de entrenamiento",
+                    pg_column="training_start_date",
+                    transform=_parse_iso_date
+                ),
                 FieldMapping(airtable_field="Estatus", pg_column="status"),
                 # TrainingPeaks Integration
                 FieldMapping(airtable_field="Cuenta TrainingPeaks", pg_column="tp_username"),

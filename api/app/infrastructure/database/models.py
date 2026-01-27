@@ -219,7 +219,7 @@ class AthleteModel(Base):
     weight_objective_category = Column(String, nullable=True)
     bad_habits_percentage = Column(String, nullable=True)
     registration_date = Column(DateTime(timezone=True), nullable=True)
-    training_start_date = Column(String, nullable=True)
+    training_start_date = Column(Date, nullable=True)  # Fecha ISO 8601 desde Airtable
 
     # Datos Generados por App (JSON se mantiene para estructuras complejas generadas internamente)
     performance = Column(JSON, nullable=True) 
