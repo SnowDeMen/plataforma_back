@@ -209,8 +209,9 @@ class TrainingHistoryUseCases:
                 driver, wait = self._create_driver()
 
                 # Login + selección de atleta en TrainingPeaks usando los servicios existentes del backend.
-                AuthService(driver, wait).login_with_cookie()
-                AthleteService(driver, wait).select_athlete(athlete_name)
+                # Envolvemos en to_thread porque estas llamadas interactúan con Selenium síncronamente.
+                await asyncio.to_thread(AuthService(driver, wait).login_with_cookie)
+                await asyncio.to_thread(AthleteService(driver, wait).select_athlete, athlete_name)
 
                 # Inyectar driver para reutilizar funciones del dominio (calendar).
                 set_driver(driver, wait)
@@ -238,7 +239,9 @@ class TrainingHistoryUseCases:
                         )
 
                     try:
-                        workouts_for_day = get_all_quickviews_on_date(
+                        # Extraer datos usando to_thread para no bloquear el loop principal durante el barrido masivo.
+                        workouts_for_day = await asyncio.to_thread(
+                            get_all_quickviews_on_date,
                             iso,
                             use_today=True if first_call else False,
                             timeout=dto.timeout,
