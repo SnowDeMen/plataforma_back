@@ -2,6 +2,7 @@
 PlanGenerator - Servicio para generar y modificar planes de entrenamiento de 4 semanas.
 Usa el LLM con Chain of Thought (CoT) para generar planes estructurados con justificaciones.
 """
+import asyncio
 import json
 from typing import Optional, Dict, Any, Callable, List, Literal
 from datetime import datetime, date, timedelta
@@ -203,6 +204,8 @@ ANTES de aplicar cualquier cambio, EVALUA si la solicitud presenta riesgos:
 
 ### Si HAY riesgos (requiere confirmacion):
 
+Solo devuelve la advertencia y la alternativa sugerida. NO incluyas planes actualizados en esta etapa.
+
 ```json
 {
     "requires_confirmation": true,
@@ -217,19 +220,35 @@ ANTES de aplicar cualquier cambio, EVALUA si la solicitud presenta riesgos:
             "duration": "Duracion si aplica",
             "tss": "TSS estimado"
         }
-    },
-    "if_user_confirms": {
-        // Plan con el cambio del usuario aplicado (a usar si confirma forzar)
-        "modification_summary": "Cambio aplicado bajo responsabilidad del usuario",
-        "changes_made": [...],
-        "updated_plan": {...}
-    },
-    "if_user_accepts_alternative": {
-        // Plan con la alternativa segura aplicada
-        "modification_summary": "Alternativa segura aplicada",
-        "changes_made": [...],
-        "updated_plan": {...}
     }
+}
+```
+
+### Si NO hay riesgos O el usuario está confirmando (force_apply=true/use_safe_alternative=true):
+
+Aplica los cambios y devuelve SOLO la parte afectada según el `scope` para ahorrar tokens y tiempo:
+
+- Si scope="day": Devuelve el objeto del workout modificado en `updated_workout`.
+- Si scope="week": Devuelve el objeto de la semana modificada (incluyendo sus 7 workouts) en `updated_week`.
+- Si scope="plan": Devuelve el plan completo actualizado en `updated_plan`.
+
+```json
+{
+    "requires_confirmation": false,
+    "modification_summary": "Descripcion breve de los cambios realizados",
+    "changes_made": [
+        {
+            "type": "day|week|plan",
+            "target": "identificador del elemento modificado",
+            "original": "resumen de lo que habia",
+            "new": "resumen de lo que hay ahora",
+            "reason": "por que se hizo este cambio"
+        }
+    ],
+    // Retorna SOLO UNO de estos tres segun el scope:
+    "updated_workout": { ... }, 
+    "updated_week": { ... },
+    "updated_plan": { ... }
 }
 ```
 
@@ -237,7 +256,8 @@ ANTES de aplicar cualquier cambio, EVALUA si la solicitud presenta riesgos:
 
 - Un experto usara este sistema, pero SIEMPRE advierte sobre riesgos
 - El usuario tiene la ultima palabra, pero debe estar informado
-- Si `force_apply: true` en el contexto, aplica el cambio del usuario aunque sea riesgoso
+- Si `force_apply: true` en el contexto: Ignora los riesgos y aplica la SOLICITUD ORIGINAL del usuario.
+- Si `use_safe_alternative: true` en el contexto: Ignora la solicitud original riesgosa y aplica estrictamente la ALTERNATIVA SEGURA que propusiste.
 - Mantén la coherencia del TSS total y la progresion de carga
 - Las justificaciones de los elementos modificados deben reflejar el nuevo razonamiento
 
@@ -508,6 +528,11 @@ Incluye las fechas reales para cada workout comenzando desde {start_date.strftim
             if not has_week_reasoning:
                 logger.warning("Plan generado sin reasoning en semanas")
             
+            # Limpiar datos numericos de todos los workouts generados
+            for week in plan_data.get('weeks', []):
+                for workout in week.get('workouts', []):
+                    self._clean_workout_data(workout)
+            
             # Contar workouts
             total_workouts = sum(
                 len(week.get('workouts', []))
@@ -592,9 +617,14 @@ Incluye las fechas reales para cada workout comenzando desde {start_date.strftim
         athlete_context = current_plan.get('athlete_context', {})
         
         # Construir contexto de modificacion
-        modification_context = self._build_modification_context(
-            current_plan, scope, target, user_prompt, force_apply
+        start_ctx = datetime.utcnow()
+        # Envolver en to_thread si el plan es muy grande para no bloquear al serializar
+        modification_context = await asyncio.to_thread(
+            self._build_modification_context,
+            current_plan, scope, target, user_prompt, force_apply, use_safe_alternative
         )
+        elapsed_ctx = (datetime.utcnow() - start_ctx).total_seconds()
+        logger.info(f"[PLAN_MODIFY] Contexto construido en {elapsed_ctx:.4f}s")
         
         if on_progress:
             on_progress(20, "Evaluando riesgos y analizando cambios...")
@@ -604,12 +634,19 @@ Incluye las fechas reales para cada workout comenzando desde {start_date.strftim
             {"role": "user", "content": modification_context}
         ]
         
+        prompt_len = sum(len(m["content"]) for m in messages)
+        logger.info(f"[PLAN_MODIFY] Enviando peticion a OpenAI model={self.model}, prompt_chars={prompt_len}")
+        
+        start_time = datetime.utcnow()
         if on_progress:
             on_progress(40, "Generando modificaciones...")
         
         try:
             api_params = self._get_api_params(messages, max_tokens=16000)
             response = await self._client.chat.completions.create(**api_params)
+            
+            elapsed = (datetime.utcnow() - start_time).total_seconds()
+            logger.info(f"[PLAN_MODIFY] Respuesta recibida de OpenAI en {elapsed:.2f}s")
             
             if on_progress:
                 on_progress(80, "Procesando cambios...")
@@ -619,45 +656,52 @@ Incluye las fechas reales para cada workout comenzando desde {start_date.strftim
             if not content:
                 raise ValueError("Respuesta vacia del LLM")
             
-            result = json.loads(content)
+            logger.debug("[PLAN_MODIFY] Parseando JSON de respuesta...")
+            result = await asyncio.to_thread(json.loads, content)
+            logger.debug("[PLAN_MODIFY] JSON parseado correctamente")
             
+            # Limpiar datos de workouts para evitar errores de validacion (e.g. "10 por dia")
+            if 'updated_workout' in result:
+                result['updated_workout'] = self._clean_workout_data(result['updated_workout'])
+            if 'updated_week' in result:
+                for w in result['updated_week'].get('workouts', []):
+                    self._clean_workout_data(w)
+            if 'updated_plan' in result:
+                 for week in result['updated_plan'].get('weeks', []):
+                     for w in week.get('workouts', []):
+                         self._clean_workout_data(w)
+            
+            # Limpiar alternativa segura si existe
+            if 'safe_alternative' in result and 'workout_preview' in result['safe_alternative']:
+                self._clean_workout_data(result['safe_alternative']['workout_preview'])
+
+            # Limpiar historial de cambios (original/new) para que siempre sean strings
+            if 'changes_made' in result:
+                for c in result['changes_made']:
+                    if 'original' in c and not isinstance(c['original'], str):
+                        c['original'] = json.dumps(c['original'], ensure_ascii=False)
+                    if 'new' in c and not isinstance(c['new'], str):
+                        c['new'] = json.dumps(c['new'], ensure_ascii=False)
+
             # Verificar si requiere confirmacion
             requires_confirmation = result.get('requires_confirmation', False)
             
+            # Determinar el tipo de decision
             if requires_confirmation and not force_apply and not use_safe_alternative:
-                # Retornar advertencia sin aplicar cambios
-                logger.warning(
-                    f"Modificacion requiere confirmacion: {result.get('risk_warning', '')}"
-                )
-                
-                if on_progress:
-                    on_progress(100, "Advertencia de riesgo detectada")
-                
-                return {
-                    'requires_confirmation': True,
-                    'risk_warning': result.get('risk_warning', 'Cambio potencialmente riesgoso'),
-                    'risk_category': result.get('risk_category', 'unknown'),
-                    'user_request_summary': result.get('user_request_summary', user_prompt),
-                    'safe_alternative': result.get('safe_alternative', {}),
-                    'plan': None,
-                    'summary': None,
-                    'changes': []
-                }
-            
-            # Determinar que plan aplicar
-            if use_safe_alternative and 'if_user_accepts_alternative' in result:
-                apply_result = result['if_user_accepts_alternative']
+                decision = 'warning'
+            elif use_safe_alternative:
                 decision = 'alternative'
-            elif force_apply and 'if_user_confirms' in result:
-                apply_result = result['if_user_confirms']
+            elif force_apply:
                 decision = 'forced'
-            elif 'updated_plan' in result:
-                apply_result = result
-                decision = 'direct'
             else:
-                raise ValueError("Respuesta sin plan actualizado")
+                decision = 'direct'
             
-            updated_plan = apply_result.get('updated_plan', {})
+            # Combinar cambios parciales si existen (o clonar el actual si es solo advertencia)
+            if decision == 'warning':
+                # Solo clonamos para añadir el historial
+                updated_plan = json.loads(json.dumps(current_plan))
+            else:
+                updated_plan = await self._merge_partial_updates(current_plan, result, scope, target)
             
             # Preservar metadata original
             updated_plan['generated_at'] = current_plan.get('generated_at')
@@ -667,7 +711,7 @@ Incluye las fechas reales para cada workout comenzando desde {start_date.strftim
             updated_plan['athlete_context'] = athlete_context
             updated_plan['last_modified_at'] = datetime.utcnow().isoformat()
             
-            # Agregar al historial de modificaciones
+            # Construir la entrada del historial
             modification_history = current_plan.get('modification_history', [])
             history_entry = {
                 'id': len(modification_history) + 1,
@@ -675,24 +719,36 @@ Incluye las fechas reales para cada workout comenzando desde {start_date.strftim
                 'scope': scope,
                 'target': target,
                 'user_prompt': user_prompt,
-                'summary': apply_result.get('modification_summary', ''),
-                'changes': apply_result.get('changes_made', []),
+                'summary': result.get('modification_summary', f"Advertencia de riesgo detectada para: {user_prompt[:30]}..."),
+                'changes': result.get('changes_made', []),
                 'decision': decision,
                 'had_risk_warning': requires_confirmation,
                 'risk_warning': result.get('risk_warning') if requires_confirmation else None,
                 'forced_by_user': force_apply,
-                'used_safe_alternative': use_safe_alternative
+                'used_safe_alternative': use_safe_alternative,
+                'safe_alternative': result.get('safe_alternative') if requires_confirmation else None
             }
             modification_history.append(history_entry)
             updated_plan['modification_history'] = modification_history
+
+            # AHORA SI: Retornar segun el tipo de decision
+            if decision == 'warning':
+                logger.warning(f"Modificacion requiere confirmacion: {result.get('risk_warning', '')}")
+                if on_progress:
+                    on_progress(100, "Advertencia de riesgo detectada")
+                
+                return {
+                    'requires_confirmation': True,
+                    'risk_warning': result.get('risk_warning', 'Cambio potencialmente riesgoso'),
+                    'risk_category': result.get('risk_category', 'unknown'),
+                    'user_request_summary': result.get('user_request_summary', user_prompt),
+                    'safe_alternative': result.get('safe_alternative', {}),
+                    'plan': updated_plan, # Ahora SI lleva el historial para el siguiente paso
+                    'summary': f"Advertencia de riesgo: {result.get('risk_warning')[:100]}...",
+                    'changes': []
+                }
             
-            if on_progress:
-                on_progress(100, "Modificacion completada")
-            
-            logger.info(
-                f"Plan modificado ({decision}): "
-                f"{apply_result.get('modification_summary', 'Sin resumen')}"
-            )
+            apply_result = result
             
             return {
                 'requires_confirmation': False,
@@ -709,6 +765,118 @@ Incluye las fechas reales para cada workout comenzando desde {start_date.strftim
         except Exception as e:
             logger.error(f"Error modificando plan: {e}")
             raise
+
+    def _clean_numeric(self, value: Any) -> Optional[int]:
+        """Extracts only the numeric part of a string (e.g., '10 por día' -> 10)."""
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return int(value)
+        if not isinstance(value, str):
+            return None
+        
+        # Remove non-numeric characters except for the first sequence of digits
+        import re
+        match = re.search(r'\d+', value)
+        if match:
+            return int(match.group())
+        return None
+
+    def _clean_workout_data(self, workout: Dict[str, Any]) -> Dict[str, Any]:
+        """Ensures numeric fields in a workout are actual numbers."""
+        if not workout:
+            return workout
+            
+        # Clean TSS
+        if 'tss' in workout:
+            workout['tss'] = self._clean_numeric(workout['tss'])
+            
+        # Clean Elevation Gain
+        if 'elevation_gain' in workout:
+            workout['elevation_gain'] = self._clean_numeric(workout['elevation_gain'])
+            
+        # Clean Calories
+        if 'calories' in workout:
+            workout['calories'] = self._clean_numeric(workout['calories'])
+            
+        # Intensity Factor (float)
+        if 'intensity_factor' in workout:
+            if isinstance(workout['intensity_factor'], str):
+                import re
+                match = re.search(r'\d+\.?\d*', workout['intensity_factor'])
+                if match:
+                    workout['intensity_factor'] = float(match.group())
+                else:
+                    workout['intensity_factor'] = None
+        
+        return workout
+
+    async def _merge_partial_updates(
+        self, 
+        current_plan: Dict[str, Any], 
+        result: Dict[str, Any], 
+        scope: str, 
+        target: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Integra cambios parciales (workout o semana) en el plan completo.
+        Recalcula totales para mantener coherencia.
+        """
+        # Clonar el plan original para no mutar el input si algo falla
+        new_plan = json.loads(json.dumps(current_plan))
+        
+        # Caso A: Retornó el plan completo (comportamiento original o scope="plan")
+        if "updated_plan" in result and result["updated_plan"]:
+            return result["updated_plan"]
+            
+        # Caso B: Retornó solo un día
+        if scope == "day" and "updated_workout" in result:
+            w_num = target.get("week")
+            d_num = target.get("day")
+            new_workout = result["updated_workout"]
+            
+            found = False
+            for week in new_plan.get("weeks", []):
+                if week.get("week") == w_num:
+                    for i, workout in enumerate(week.get("workouts", [])):
+                        if workout.get("day") == d_num:
+                            week["workouts"][i] = new_workout
+                            found = True
+                            break
+                    break
+            if not found:
+                logger.warning(f"No se pudo encontrar el workout para mezclar: semana {w_num}, dia {d_num}")
+
+        # Caso C: Retornó solo una semana
+        elif scope == "week" and "updated_week" in result:
+            w_num = target.get("week")
+            new_week = result["updated_week"]
+            
+            found = False
+            for i, week in enumerate(new_plan.get("weeks", [])):
+                if week.get("week") == w_num:
+                    new_plan["weeks"][i] = new_week
+                    found = True
+                    break
+            if not found:
+                logger.warning(f"No se pudo encontrar la semana {w_num} para mezclar")
+
+        # Recalcular totales de cada semana y del plan
+        for week in new_plan.get("weeks", []):
+            week_totals = self.calculate_totals({"weeks": [week]})
+            week["total_tss"] = week_totals["total_tss"]
+            week["total_distance_km"] = week_totals["total_distance_km"]
+            # Convertir horas decimales a formato h:mm:ss para la semana
+            h = int(week_totals["total_duration_hours"])
+            m = int((week_totals["total_duration_hours"] * 60) % 60)
+            week["total_duration"] = f"{h}:{m:02d}:00"
+            
+        plan_totals = self.calculate_totals(new_plan)
+        new_plan["total_tss"] = plan_totals["total_tss"]
+        new_plan["total_distance_km"] = plan_totals["total_distance_km"]
+        new_plan["total_duration_hours"] = plan_totals["total_duration_hours"]
+        
+        return new_plan
     
     def _build_modification_context(
         self,
@@ -716,7 +884,8 @@ Incluye las fechas reales para cada workout comenzando desde {start_date.strftim
         scope: Literal['day', 'week', 'plan'],
         target: Optional[Dict[str, Any]],
         user_prompt: str,
-        force_apply: bool = False
+        force_apply: bool = False,
+        use_safe_alternative: bool = False
     ) -> str:
         """
         Construye el contexto para la modificacion del plan.
@@ -809,21 +978,50 @@ Incluye las fechas reales para cada workout comenzando desde {start_date.strftim
         }
         context_parts.append(json.dumps(plan_for_context, indent=2, ensure_ascii=False))
         context_parts.append("```")
+
+        # Seccion NUEVA: Historial de modificaciones (Memoria)
+        history = current_plan.get('modification_history', [])
+        if history:
+            context_parts.append("\n## HISTORIAL RECIENTE DE MODIFICACIONES (MEMORIA)\n")
+            context_parts.append("Usa esto para entender el contexto de la conversacion actual:")
+            for entry in history[-5:]:  # Mostrar ultimas 5
+                role = "USUARIO"
+                msg = entry.get('user_prompt', '')
+                context_parts.append(f"- [{entry.get('timestamp', '')[:16]}] {role}: {msg}")
+                context_parts.append(f"  ENTRENADOR: {entry.get('summary', '')}")
+                
+                if entry.get('had_risk_warning') and entry.get('safe_alternative'):
+                    context_parts.append(f"  ADVERTENCIA: {entry.get('risk_warning')}")
+                    context_parts.append(f"  ALTERNATIVA SEGURA PROPUESTA: {json.dumps(entry.get('safe_alternative'), ensure_ascii=False)}")
+                
+                if entry.get('used_safe_alternative'):
+                    context_parts.append(f"  (Resultado: El usuario aceptó la alternativa segura)")
         
         # Seccion 4: Instrucciones del usuario
         context_parts.append(f"\n## INSTRUCCION DEL USUARIO\n")
-        context_parts.append(f'"{user_prompt}"')
+        if use_safe_alternative:
+            context_parts.append(f"INSTRUCCION REEMPlAZADA: El usuario originalmente pidió '{user_prompt}', ")
+            context_parts.append("pero ahora ha RECHAZADO esa idea y te pide aplicar la ALTERNATIVA SEGURA que propusiste anteriormente.")
+            context_parts.append("DEBES APLICAR LA ALTERNATIVA SEGURA. Busca los detalles de esta alternativa en el HISTORIAL DE MODIFICACIONES arriba.")
+            context_parts.append("Los datos del workout o semana a aplicar están en el campo 'safe_alternative' del historial reciente.")
+        else:
+            context_parts.append(f'"{user_prompt}"')
         
         # Seccion 5: Estado de confirmacion
         if force_apply:
-            context_parts.append("\n## CONFIRMACION DEL USUARIO\n")
+            context_parts.append("\n## CONFIRMACION DEL USUARIO: FORZAR CAMBIO\n")
             context_parts.append("**force_apply: true**")
-            context_parts.append("El usuario ha confirmado que quiere aplicar este cambio")
-            context_parts.append("a pesar de los riesgos. Procede con la modificacion solicitada.")
+            context_parts.append("El usuario ha confirmado que quiere aplicar SU cambio original")
+            context_parts.append("a pesar de los riesgos. Procede a aplicar la solicitud original.")
+        elif use_safe_alternative:
+            context_parts.append("\n## CONFIRMACION DEL USUARIO: ACEPTAR ALTERNATIVA SEGURA\n")
+            context_parts.append("**use_safe_alternative: true**")
+            context_parts.append("El usuario ha aceptado la alternativa segura que propusiste anteriormente.")
+            context_parts.append("Procede a aplicar la alternativa segura al plan.")
         else:
             context_parts.append("\n## EVALUACION DE RIESGO REQUERIDA\n")
             context_parts.append("Evalua si la solicitud presenta riesgos antes de aplicar.")
-            context_parts.append("Si detectas riesgos, retorna requires_confirmation: true")
+            context_parts.append("Si detectas riesgos, retorna requires_confirmation: true y describe la alternativa.")
         
         # Seccion 6: Recordatorio
         context_parts.append("\n## RECORDATORIO\n")
