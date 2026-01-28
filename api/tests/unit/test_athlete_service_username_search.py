@@ -208,6 +208,44 @@ class TestAthleteServiceUsernameSearch:
         assert result["found"] is True
         assert result["tiles_checked"] == 2
     
+    def test_search_in_current_group_case_insensitive_match(self, athlete_service):
+        """Verifica que la busqueda es case-insensitive."""
+        mock_tile = Mock()
+        
+        # El modal retorna "JohnDoe" pero buscamos "johndoe" (diferente case)
+        with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
+             patch.object(athlete_service, 'get_athlete_name_from_tile', return_value="John Doe"), \
+             patch.object(athlete_service, 'click_athlete_settings_button', return_value=True), \
+             patch.object(athlete_service, 'wait_for_settings_modal', return_value=True), \
+             patch.object(athlete_service, 'get_username_from_modal', return_value="JohnDoe"), \
+             patch.object(athlete_service, 'get_full_name_from_modal', return_value="John Doe"), \
+             patch.object(athlete_service, 'close_settings_modal', return_value=True):
+            
+            # Buscar con lowercase debe encontrar el uppercase
+            result = athlete_service._search_in_current_group("johndoe", "My Athletes")
+        
+        assert result["found"] is True
+        assert result["full_name"] == "John Doe"
+    
+    def test_search_in_current_group_case_insensitive_uppercase_search(self, athlete_service):
+        """Verifica que buscar con MAYUSCULAS encuentra minusculas."""
+        mock_tile = Mock()
+        
+        # El modal retorna "johndoe" pero buscamos "JOHNDOE"
+        with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
+             patch.object(athlete_service, 'get_athlete_name_from_tile', return_value="John Doe"), \
+             patch.object(athlete_service, 'click_athlete_settings_button', return_value=True), \
+             patch.object(athlete_service, 'wait_for_settings_modal', return_value=True), \
+             patch.object(athlete_service, 'get_username_from_modal', return_value="johndoe"), \
+             patch.object(athlete_service, 'get_full_name_from_modal', return_value="John Doe"), \
+             patch.object(athlete_service, 'close_settings_modal', return_value=True):
+            
+            # Buscar con UPPERCASE debe encontrar el lowercase
+            result = athlete_service._search_in_current_group("JOHNDOE", "My Athletes")
+        
+        assert result["found"] is True
+        assert result["full_name"] == "John Doe"
+    
     # =========================================================================
     # Tests para find_athlete_by_username
     # =========================================================================

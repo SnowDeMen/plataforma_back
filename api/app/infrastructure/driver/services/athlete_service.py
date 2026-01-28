@@ -763,7 +763,7 @@ class AthleteService:
         Este metodo no cambia de grupo, solo itera los atletas visibles.
         
         Args:
-            username: Username a buscar (case-sensitive)
+            username: Username a buscar (case-insensitive)
             group_name: Nombre del grupo actual (para logging y resultado)
             timeout: Segundos de espera por operacion
             
@@ -807,8 +807,8 @@ class AthleteService:
             # Extraer username del modal
             modal_username = self.get_username_from_modal()
             
-            # Comparar usernames
-            if modal_username == username:
+            # Comparar usernames (case-insensitive)
+            if modal_username.lower() == username.lower():
                 # Match encontrado
                 full_name = self.get_full_name_from_modal()
                 
@@ -841,7 +841,7 @@ class AthleteService:
         4. Si hay match: extrae nombre completo, imprime en consola, retorna
         
         Args:
-            username: Username a buscar (case-sensitive)
+            username: Username a buscar (case-insensitive)
             timeout: Segundos de espera por operacion
             
         Returns:
