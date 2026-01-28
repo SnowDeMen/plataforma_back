@@ -201,6 +201,7 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="Estatus", pg_column="status"),
                 # TrainingPeaks Integration
                 FieldMapping(airtable_field="Cuenta TrainingPeaks", pg_column="tp_username"),
+                FieldMapping(airtable_field="tp_name", pg_column="tp_name"),
                 # Campo principal de nombre (usa formula calculada de Airtable)
                 FieldMapping(
                     airtable_field="Nombre Completo", 

@@ -144,19 +144,35 @@ class TPSyncUseCases:
         Ejecuta el flujo de sincronizacion con TrainingPeaks.
         
         Flujo:
-        1. Crea driver navegando a #home (en thread para no bloquear)
-        2. Hace login en TrainingPeaks
-        3. Busca el atleta por username iterando por todos los grupos
-        4. Si lo encuentra, obtiene el nombre del atleta en TP (tp_name)
-        5. Guarda el nombre como tp_name en PostgreSQL
-        6. Actualiza el campo tp_name en Airtable
+        1. Obtiene el nombre del atleta de la BD (para busqueda optimizada)
+        2. Crea driver navegando a #home (en thread para no bloquear)
+        3. Hace login en TrainingPeaks
+        4. Busca el atleta por username usando el nombre como hint (busqueda rapida)
+        5. Si lo encuentra, obtiene el nombre del atleta en TP (tp_name)
+        6. Guarda el nombre como tp_name en PostgreSQL
+        7. Actualiza el campo tp_name en Airtable
         
         Las operaciones de Selenium se ejecutan en threads separados via run_selenium()
         para no bloquear el event loop y permitir que el healthcheck responda.
         """
         driver = None
+        expected_name = None
         
         try:
+            # 0. Obtener el nombre del atleta de la BD para busqueda optimizada
+            await self._update_job(
+                job_id, 
+                message="Obteniendo datos del atleta...", 
+                progress=2
+            )
+            
+            async with AsyncSessionLocal() as db:
+                repo = AthleteRepository(db)
+                athlete = await repo.get_by_id(athlete_id)
+                if athlete:
+                    expected_name = athlete.name
+                    logger.info(f"[tp-sync-job:{job_id}] Nombre para busqueda optimizada: {expected_name}")
+            
             # 1. Crear driver navegando a #home
             await self._update_job(
                 job_id, 
@@ -188,13 +204,25 @@ class TPSyncUseCases:
             logger.info(f"[tp-sync-job:{job_id}] Navegando a #home...")
             await run_selenium(athlete_service.navigate_to_home)
             
-            # 4. Buscar por username (proceso iterativo, puede tardar)
-            await self._update_job(
-                job_id, 
-                message="Buscando atleta por username (esto puede tardar)...", 
-                progress=35
+            # 4. Buscar por username (optimizado si tenemos expected_name)
+            if expected_name:
+                await self._update_job(
+                    job_id, 
+                    message=f"Buscando atleta '{expected_name}' (busqueda optimizada)...", 
+                    progress=35
+                )
+            else:
+                await self._update_job(
+                    job_id, 
+                    message="Buscando atleta por username (esto puede tardar)...", 
+                    progress=35
+                )
+            
+            search_result = await run_selenium(
+                athlete_service.find_athlete_by_username, 
+                username,
+                expected_name  # Pasamos el nombre para busqueda rapida
             )
-            search_result = await run_selenium(athlete_service.find_athlete_by_username, username)
             
             if not search_result["found"]:
                 await self._update_job(

@@ -29,6 +29,7 @@ from app.application.dto.plan_dto import (
     ApplyTPPlanResponseDTO
 )
 from app.infrastructure.repositories.plan_repository import PlanRepository
+from app.infrastructure.repositories.athlete_repository import AthleteRepository
 from app.infrastructure.autogen.plan_generator import PlanGenerator
 from app.shared.exceptions.domain import PlanNotFoundException
 from app.application.interfaces.trainingpeaks_plan_publisher import TrainingPeaksPlanPublisher
@@ -411,8 +412,9 @@ class PlanUseCases:
 
         Reglas:
         - Flujo determinista y bloqueante (la request espera el resultado).
-        - NO usa MCP: se levanta una sesión efímera de Selenium para publicar los workouts.
+        - NO usa MCP: se levanta una sesion efimera de Selenium para publicar los workouts.
         - Si cualquier paso falla, NO se marca el plan como 'applied'.
+        - Usa tp_name del atleta (obtenido via tp_sync) para seleccionarlo en TrainingPeaks.
         """
         plan = await self.repository.get_by_id(plan_id)
         if not plan:
@@ -424,6 +426,34 @@ class PlanUseCases:
         if not dto.workouts:
             raise ValueError("No se recibieron workouts para aplicar")
 
+        # Obtener el atleta para usar tp_name (nombre exacto en TrainingPeaks)
+        athlete_repo = AthleteRepository(self.db)
+        athlete = await athlete_repo.get_by_id(plan.athlete_id)
+        
+        if not athlete:
+            logger.error(f"[approve_and_apply] Atleta no encontrado en BD: {plan.athlete_id}")
+            raise ValueError(f"Atleta no encontrado: {plan.athlete_id}")
+        
+        # Log para debugging: mostrar nombre en BD vs nombre en TP
+        logger.info(
+            f"[approve_and_apply] Atleta encontrado: "
+            f"id='{athlete.id}', name='{athlete.name}', tp_name='{athlete.tp_name}'"
+        )
+        
+        if not athlete.tp_name:
+            logger.error(
+                f"[approve_and_apply] Atleta '{athlete.name}' (id={athlete.id}) "
+                "no tiene tp_name configurado. Abortando."
+            )
+            raise ValueError(
+                f"El atleta '{athlete.name}' no tiene tp_name configurado. "
+                "Ejecuta la sincronizacion con TrainingPeaks primero."
+            )
+        
+        # Usar tp_name (nombre exacto en TP) en lugar de plan.athlete_name
+        tp_athlete_name = athlete.tp_name
+        logger.info(f"[approve_and_apply] Usando tp_name para seleccion en TP: '{tp_athlete_name}'")
+
         if publisher is None:
             from app.infrastructure.trainingpeaks.selenium_plan_publisher import (
                 SeleniumTrainingPeaksPlanPublisher,
@@ -434,10 +464,10 @@ class PlanUseCases:
             # Publicar en TrainingPeaks (Selenium directo)
             publisher.publish_plan(
                 plan_id=plan_id,
-                athlete_name=plan.athlete_name,
+                athlete_name=tp_athlete_name,
                 workouts=dto.workouts,
                 start_date=plan.start_date,
-                # Por requerimiento, si no se envía carpeta se usa Neuronomy.
+                # Por requerimiento, si no se envia carpeta se usa Neuronomy.
                 folder_name=dto.folder_name or "Neuronomy",
             )
 
@@ -452,7 +482,7 @@ class PlanUseCases:
             await self.db.commit()
 
             plan = await self.repository.get_by_id(plan_id)
-            logger.info(f"Plan {plan_id} aplicado en TrainingPeaks")
+            logger.info(f"Plan {plan_id} aplicado en TrainingPeaks para atleta '{tp_athlete_name}'")
             return self._to_dto(plan)
 
         except Exception as e:
