@@ -1,1 +1,30 @@
-Generic single-database configuration.
+Migraciones de Base de Datos con Alembic
+========================================
+
+Este directorio contiene las migraciones de esquema para PostgreSQL.
+
+Comandos principales:
+
+  # Ver estado actual
+  alembic current
+
+  # Ver historial de migraciones
+  alembic history
+
+  # Aplicar todas las migraciones pendientes
+  alembic upgrade head
+
+  # Revertir ultima migracion
+  alembic downgrade -1
+
+  # Generar nueva migracion automatica
+  alembic revision --autogenerate -m "descripcion"
+
+  # Generar migracion manual
+  alembic revision -m "descripcion"
+
+Notas:
+
+- Asegurate de que DATABASE_URL este configurado en .env
+- Las migraciones se ejecutan de forma sincrona (no async)
+- El env.py convierte automaticamente asyncpg a psycopg2

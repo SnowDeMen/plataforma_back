@@ -71,7 +71,11 @@ def get_table_sync_config(
             target_schema="public",
             target_table="athletes",
             field_mappings=[
-                FieldMapping(airtable_field="Nombre(s)", pg_column="full_name"),
+                FieldMapping(
+                    airtable_field="Nombre(s)", 
+                    pg_column="full_name",
+                    transform=lambda v: str(v).strip().title() if v else None
+                ),
                 FieldMapping(
                     airtable_field="Apellido(s)", 
                     pg_column="last_name",
@@ -189,13 +193,15 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="Fecha de Registro", pg_column="registration_date"),
                 FieldMapping(airtable_field="Fecha de inicio de entrenamiento", pg_column="training_start_date"),
                 FieldMapping(airtable_field="Estatus", pg_column="status"),
-                # Mapeos adicionales para unificar
+                # TrainingPeaks Integration
+                FieldMapping(airtable_field="Cuenta TrainingPeaks", pg_column="tp_username"),
+                # Campo principal de nombre (usa formula calculada de Airtable)
                 FieldMapping(
-                    airtable_field="Nombre(s)", 
+                    airtable_field="Nombre Completo", 
                     pg_column="name", 
                     required=True,
                     transform=lambda v: str(v).strip().title() if v else None
-                ), # Usamos Nombre completo como fallback para 'name'
+                ),
             ],
             external_id_column="airtable_id",
             record_id_column="id",

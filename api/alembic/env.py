@@ -40,7 +40,6 @@ config = context.config
 # Reemplazar asyncpg por psycopg (psycopg3) para migraciones sincronas
 db_url = settings.effective_database_url.replace("+asyncpg", "+psycopg")
 config.set_main_option("sqlalchemy.url", db_url)
-
 # Configurar logging desde alembic.ini
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
@@ -70,7 +69,6 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """
-    Ejecuta migraciones en modo 'online'.
     
     Conecta a la base de datos y ejecuta las migraciones directamente.
     """

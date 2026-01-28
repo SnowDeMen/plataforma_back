@@ -4,7 +4,7 @@ Agrupa todos los endpoints de la version 1.
 """
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import agents, sessions, chat, plans, plan_ws, athletes, auth, training_history
+from app.api.v1.endpoints import agents, sessions, chat, plans, plan_ws, athletes, auth, training_history, sync
 
 
 # Router principal de la API v1
@@ -20,4 +20,5 @@ api_router.include_router(plans.router)
 api_router.include_router(plan_ws.router)
 api_router.include_router(athletes.router)
 api_router.include_router(training_history.router)
+api_router.include_router(sync.router)
 

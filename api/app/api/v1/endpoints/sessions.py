@@ -3,17 +3,28 @@ Endpoints para operaciones con sesiones de entrenamiento.
 Maneja la creacion, consulta y cierre de sesiones con drivers de Selenium.
 Incluye inicializacion automatica del MCP y agente de chat.
 """
-from fastapi import APIRouter, Depends, status
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.application.use_cases.session_use_cases import SessionUseCases
-from app.application.dto.session_dto import SessionStartDTO, SessionResponseDTO
-from app.api.v1.dependencies.use_case_deps import get_session_use_cases
+from app.application.use_cases.tp_sync_use_cases import TPSyncUseCases
+from app.application.dto.session_dto import (
+    SessionStartDTO, 
+    SessionResponseDTO, 
+    TPSyncResultDTO,
+    TPSyncJobResponseDTO,
+    TPSyncJobStatusDTO,
+)
+from app.api.v1.dependencies.use_case_deps import get_session_use_cases, get_tp_sync_use_cases
 from app.infrastructure.database.session import get_db
 from app.infrastructure.repositories.chat_repository import ChatRepository
+from app.infrastructure.repositories.athlete_repository import AthleteRepository
 from app.infrastructure.autogen.chat_manager import ChatManager
 from app.infrastructure.driver.driver_manager import DriverManager
+from app.infrastructure.driver.selenium_executor import run_selenium
 from app.infrastructure.mcp.mcp_server_manager import MCPServerManager
 from app.shared.utils.audit_logger import AuditLogger
 
@@ -469,3 +480,79 @@ async def restart_session(
     session_response.message = f"Sesion reiniciada correctamente. MCP: {'Activo' if mcp_initialized else 'Inactivo'}"
     
     return session_response
+
+
+@router.post(
+    "/sync-tp-username",
+    response_model=TPSyncJobResponseDTO,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Iniciar sincronizacion de nombre de atleta desde TrainingPeaks"
+)
+async def sync_tp_username(
+    username: str,
+    athlete_id: str,
+    use_cases: TPSyncUseCases = Depends(get_tp_sync_use_cases),
+) -> TPSyncJobResponseDTO:
+    """
+    Inicia un job asincrono para buscar un atleta en TrainingPeaks por username.
+    
+    El endpoint retorna inmediatamente con un job_id. El frontend debe hacer
+    polling al endpoint GET /sync-tp-username/jobs/{job_id} para obtener el
+    estado y resultado final.
+    
+    Flujo del job en background:
+    1. Crea driver navegando a #home
+    2. Hace login en TrainingPeaks
+    3. Busca el atleta por username iterando por todos los grupos
+    4. Si lo encuentra, guarda el tp_name en PostgreSQL y Airtable
+    
+    Args:
+        username: Username de TrainingPeaks (tp_username)
+        athlete_id: ID del atleta en la base de datos
+        use_cases: Casos de uso de sincronizacion TP (inyectado)
+    
+    Returns:
+        TPSyncJobResponseDTO: Respuesta con job_id para polling
+    """
+    return await use_cases.start_sync(username=username, athlete_id=athlete_id)
+
+
+@router.get(
+    "/sync-tp-username/jobs/{job_id}",
+    response_model=TPSyncJobStatusDTO,
+    summary="Obtener estado de un job de sincronizacion TP (polling)"
+)
+async def get_tp_sync_job_status(
+    job_id: str,
+    use_cases: TPSyncUseCases = Depends(get_tp_sync_use_cases),
+) -> TPSyncJobStatusDTO:
+    """
+    Retorna el estado actual del job de sincronizacion.
+    
+    El frontend debe hacer polling a este endpoint cada 2 segundos hasta que
+    el status sea 'completed' o 'failed'.
+    
+    Cuando status == 'completed':
+    - tp_name contiene el nombre encontrado en TrainingPeaks
+    - group contiene el grupo donde se encontro el atleta
+    
+    Cuando status == 'failed':
+    - error contiene el mensaje de error
+    
+    Args:
+        job_id: ID del job a consultar
+        use_cases: Casos de uso de sincronizacion TP (inyectado)
+        
+    Returns:
+        TPSyncJobStatusDTO: Estado actual del job
+        
+    Raises:
+        404: Si el job no existe
+    """
+    try:
+        return await use_cases.get_job_status(job_id)
+    except KeyError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Job no encontrado"
+        )

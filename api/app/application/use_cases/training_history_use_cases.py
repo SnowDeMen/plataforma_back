@@ -35,6 +35,7 @@ from app.application.use_cases.training_history_policy import (
 from app.core.config import settings
 from app.infrastructure.database.session import AsyncSessionLocal
 from app.infrastructure.driver.driver_manager import TRAININGPEAKS_URL
+from app.infrastructure.driver.selenium_executor import run_selenium
 from app.infrastructure.driver.services.auth_service import AuthService
 from app.infrastructure.driver.services.athlete_service import AthleteService
 from app.infrastructure.repositories.athlete_repository import AthleteRepository
@@ -186,6 +187,9 @@ class TrainingHistoryUseCases:
         - Usa `obtener_datos_calendario` (MCP) con `use_today` solo en la primera llamada
           para acelerar el barrido.
         - Corta cuando hay `gap_days` sin entrenos luego de haber encontrado al menos uno.
+        
+        Nota: Las operaciones de Selenium se ejecutan en threads separados via run_selenium()
+        para no bloquear el event loop y permitir que el healthcheck responda.
         """
         try:
             await self._update_job(job_id, message="Preparando sesión Selenium/MCP...", progress=0, status="running")
@@ -206,12 +210,12 @@ class TrainingHistoryUseCases:
             driver: Optional[webdriver.Chrome] = None
             wait: Optional[WebDriverWait] = None
             try:
-                driver, wait = self._create_driver()
+                # Crear driver en thread separado para no bloquear el event loop
+                driver, wait = await run_selenium(self._create_driver)
 
-                # Login + selección de atleta en TrainingPeaks usando los servicios existentes del backend.
-                # Envolvemos en to_thread porque estas llamadas interactúan con Selenium síncronamente.
-                await asyncio.to_thread(AuthService(driver, wait).login_with_cookie)
-                await asyncio.to_thread(AthleteService(driver, wait).select_athlete, athlete_name)
+                # Login + selección de atleta en threads separados
+                await run_selenium(AuthService(driver, wait).login_with_cookie)
+                await run_selenium(AthleteService(driver, wait).select_athlete, athlete_name)
 
                 # Inyectar driver para reutilizar funciones del dominio (calendar).
                 set_driver(driver, wait)
@@ -239,8 +243,8 @@ class TrainingHistoryUseCases:
                         )
 
                     try:
-                        # Extraer datos usando to_thread para no bloquear el loop principal durante el barrido masivo.
-                        workouts_for_day = await asyncio.to_thread(
+                        # Ejecutar extraccion en thread para no bloquear el event loop
+                        workouts_for_day = await run_selenium(
                             get_all_quickviews_on_date,
                             iso,
                             use_today=True if first_call else False,
