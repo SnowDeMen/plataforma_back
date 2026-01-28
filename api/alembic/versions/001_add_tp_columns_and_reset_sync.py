@@ -16,16 +16,12 @@ import sqlalchemy as sa
 
 
 revision: str = '001_tp_sync'
-down_revision: Union[str, None] = None
+down_revision: Union[str, None] = '2b7f2c054832'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Agregar columnas de TrainingPeaks a athletes
-    op.add_column('athletes', sa.Column('tp_username', sa.String(), nullable=True))
-    op.add_column('athletes', sa.Column('tp_name', sa.String(), nullable=True))
-    
     # Resetear cursor de sync_state para forzar full sync
     # Esto permite que el nuevo mapeo de "Nombre Completo" y "Cuenta TrainingPeaks"
     # se aplique a todos los registros existentes
@@ -37,9 +33,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Eliminar columnas de TrainingPeaks
-    op.drop_column('athletes', 'tp_name')
-    op.drop_column('athletes', 'tp_username')
-    
     # Nota: No se restaura el cursor porque no tiene sentido
     # volver a un estado anterior del sync
+    pass
