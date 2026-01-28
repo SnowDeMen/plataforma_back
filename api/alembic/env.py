@@ -1,51 +1,61 @@
 """
-Configuracion del entorno de Alembic.
-Carga la URL de base de datos desde variables de entorno.
+Configuracion de Alembic para migraciones de base de datos.
+
+Este archivo configura Alembic para:
+- Usar la URL de base de datos desde settings (config.py)
+- Importar todos los modelos para autogenerate
+- Soportar PostgreSQL (asyncpg se reemplaza por psycopg2 para migraciones sync)
 """
-import os
 import sys
+from pathlib import Path
 from logging.config import fileConfig
 
+from sqlalchemy import engine_from_config
 from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy import create_engine
 
 from alembic import context
 
 # Agregar el directorio raiz al path para imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+API_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(API_DIR))
 
-# Cargar variables de entorno
-from dotenv import load_dotenv
-load_dotenv()
+# Importar configuracion y modelos
+from app.core.config import settings
+from app.infrastructure.database.session import Base
 
-# Configuracion de Alembic
+# Importar todos los modelos para que Alembic los detecte
+from app.infrastructure.database.models import (
+    AgentModel,
+    ChatSessionModel,
+    ConversationModel,
+    TrainingModel,
+    AthleteModel,
+    TrainingPlanModel,
+)
+
+# Alembic Config object
 config = context.config
 
+# Configurar URL de base de datos desde settings
+# Reemplazar asyncpg por psycopg (psycopg3) para migraciones sincronas
+db_url = settings.effective_database_url.replace("+asyncpg", "+psycopg")
+config.set_main_option("sqlalchemy.url", db_url)
 # Configurar logging desde alembic.ini
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Importar modelos para autogenerate
-from app.infrastructure.database.models import Base
+# Metadata de los modelos para autogenerate
 target_metadata = Base.metadata
-
-
-def get_url() -> str:
-    """Obtiene la URL de la base de datos desde variables de entorno."""
-    url = os.getenv("DATABASE_URL", "")
-    # Convertir asyncpg a psycopg2 para migraciones sincronas
-    if "+asyncpg" in url:
-        url = url.replace("+asyncpg", "")
-    return url
 
 
 def run_migrations_offline() -> None:
     """
     Ejecuta migraciones en modo 'offline'.
-    Genera SQL sin conectar a la base de datos.
+    
+    Genera SQL sin conectarse a la base de datos.
+    Util para revisar migraciones antes de ejecutarlas.
     """
-    url = get_url()
+    url = config.get_main_option("sqlalchemy.url")
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -59,11 +69,12 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """
-    Ejecuta migraciones en modo 'online'.
-    Conecta a la base de datos y ejecuta las migraciones.
+    
+    Conecta a la base de datos y ejecuta las migraciones directamente.
     """
-    connectable = create_engine(
-        get_url(),
+    connectable = engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
@@ -71,6 +82,8 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            # Comparar tipos de columnas para detectar cambios
+            compare_type=True,
         )
 
         with context.begin_transaction():

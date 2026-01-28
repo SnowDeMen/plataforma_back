@@ -174,6 +174,7 @@ class AirtableClient:
 
     def update_record(
         self,
+        *,
         table_name: str,
         record_id: str,
         fields: dict[str, Any],
@@ -197,10 +198,10 @@ class AirtableClient:
             AirtableApiError: Si la request falla
         """
         url = f"{self._base_url}/{self._creds.base_id}/{table_name}/{record_id}"
-        return self._request_json_with_body("PATCH", url, body={"fields": fields})
-    
+        return self._request_json_with_body("PATCH", url, json_body={"fields": fields})
+
     def _request_json_with_body(
-        self, method: str, url: str, *, body: dict[str, Any]
+        self, method: str, url: str, *, json_body: dict[str, Any]
     ) -> dict[str, Any]:
         """
         Request HTTP con body JSON y backoff para 429/5xx.
@@ -208,37 +209,35 @@ class AirtableClient:
         Args:
             method: Metodo HTTP (PATCH, POST, PUT, DELETE)
             url: URL completa del endpoint
-            body: Diccionario a enviar como JSON en el body
+            json_body: Diccionario a enviar como JSON en el body
             
         Returns:
             dict: Respuesta JSON de Airtable
         """
-        import json
-        
         headers = {
             "Authorization": f"Bearer {self._creds.token}",
             "Content-Type": "application/json",
         }
-        
+
         for attempt in range(self._max_retries + 1):
             resp = self._session.request(
                 method=method,
                 url=url,
+                json=json_body,
                 headers=headers,
-                data=json.dumps(body),
                 timeout=self._timeout_s,
             )
-            
+
             if 200 <= resp.status_code < 300:
                 return resp.json()
-            
+
             # Errores recuperables (429 rate limit, 5xx server errors)
             if resp.status_code == 429 or 500 <= resp.status_code < 600:
                 if attempt >= self._max_retries:
                     raise AirtableApiError(
                         f"Airtable error {resp.status_code} tras {attempt} reintentos: {resp.text}"
                     )
-                
+
                 retry_after = resp.headers.get("Retry-After")
                 if retry_after:
                     try:
@@ -248,18 +247,16 @@ class AirtableClient:
                 else:
                     base = min(self._max_backoff_s, self._min_backoff_s * (2**attempt))
                     sleep_s = base + (0.15 * base)
-                
+
                 time.sleep(sleep_s)
                 continue
-            
+
             # Errores no recuperables (4xx excepto 429)
             raise AirtableApiError(
                 f"Airtable request falló {resp.status_code}: {resp.text}"
             )
-        
-        # Nunca deberia llegar aqui, pero por seguridad
-        raise AirtableApiError("Max retries alcanzado sin respuesta exitosa")
-    
+
+        raise AirtableApiError("Max retries exceeded")
     def _request_json(
         self, method: str, url: str, *, query: list[tuple[str, Any]]
     ) -> dict[str, Any]:
