@@ -429,8 +429,9 @@ class PlanUseCases:
             publisher = SeleniumTrainingPeaksPlanPublisher()
 
         try:
-            # Publicar en TrainingPeaks (Selenium directo)
-            publisher.publish_plan(
+            # Publicar en TrainingPeaks (Selenium directo) en un hilo separado para no bloquear el event loop.
+            await asyncio.to_thread(
+                publisher.publish_plan,
                 plan_id=plan_id,
                 athlete_name=plan.athlete_name,
                 workouts=dto.workouts,
@@ -636,6 +637,7 @@ class PlanUseCases:
         
         try:
             # Llamar al generador para modificar (con deteccion de riesgos)
+            start_time = datetime.utcnow()
             result = await self.generator.modify_plan(
                 current_plan=plan.plan_data,
                 scope=dto.scope,
@@ -644,10 +646,22 @@ class PlanUseCases:
                 force_apply=dto.force_apply,
                 use_safe_alternative=dto.use_safe_alternative
             )
+            elapsed = (datetime.utcnow() - start_time).total_seconds()
+            logger.info(f"[PLAN_MODIFY_USECASE] Generacion completada en {elapsed:.2f}s")
             
             # Verificar si requiere confirmacion
             if result.get('requires_confirmation', False):
-                # No se aplica el cambio, solo se retorna la advertencia
+                # IMPORTANTE: Persistir el plan aunque requiera confirmacion
+                # Esto es para guardar el historial 'warning' (la memoria de la IA)
+                if result.get('plan'):
+                    await self.repository.update_plan_data(
+                        plan_id, 
+                        result['plan'], 
+                        plan.plan_summary
+                    )
+                    await self.db.commit()
+
+                # No se aplica el cambio real al contenido, solo se retorna la advertencia
                 safe_alt = result.get('safe_alternative', {})
                 workout_preview = safe_alt.get('workout_preview', {})
                 
@@ -857,7 +871,10 @@ class PlanUseCases:
         # Calcular totales
         totals = {}
         if plan.plan_data:
+            start_totals = datetime.utcnow()
             totals = self.generator.calculate_totals(plan.plan_data)
+            elapsed_totals = (datetime.utcnow() - start_totals).total_seconds()
+            logger.debug(f"[_to_dto] Totales calculados en {elapsed_totals:.4f}s")
         
         return TrainingPlanDTO(
             id=plan.id,

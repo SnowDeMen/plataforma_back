@@ -629,8 +629,9 @@ Nombre: {athlete_name}
             success=True
         )
         
-        # Ejecutar la herramienta
-        result = MCPToolsAdapter.execute_tool(
+        # Ejecutar la herramienta en un hilo separado para no bloquear el event loop
+        result = await asyncio.to_thread(
+            MCPToolsAdapter.execute_tool,
             tool_name=function_name,
             arguments=arguments,
             session_id=self.session_id

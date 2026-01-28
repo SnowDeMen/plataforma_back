@@ -71,15 +71,7 @@ def get_table_sync_config(
             target_schema="public",
             target_table="athletes",
             field_mappings=[
-                # Campo principal (required)
-                FieldMapping(
-                    airtable_field="Nombre Completo",  # Con C mayuscula
-                    pg_column="name", 
-                    required=True,
-                    transform=lambda v: str(v).strip().title() if v else None
-                ),
-                # Datos personales
-                FieldMapping(airtable_field="Nombre Completo", pg_column="full_name"),
+                FieldMapping(airtable_field="Nombre(s)", pg_column="full_name"),
                 FieldMapping(
                     airtable_field="Apellido(s)", 
                     pg_column="last_name",
@@ -197,6 +189,13 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="Fecha de Registro", pg_column="registration_date"),
                 FieldMapping(airtable_field="Fecha de inicio de entrenamiento", pg_column="training_start_date"),
                 FieldMapping(airtable_field="Estatus", pg_column="status"),
+                # Mapeos adicionales para unificar
+                FieldMapping(
+                    airtable_field="Nombre(s)", 
+                    pg_column="name", 
+                    required=True,
+                    transform=lambda v: str(v).strip().title() if v else None
+                ), # Usamos Nombre completo como fallback para 'name'
             ],
             external_id_column="airtable_id",
             record_id_column="id",
