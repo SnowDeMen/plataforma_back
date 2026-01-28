@@ -172,6 +172,78 @@ class AirtableClient:
             if not offset:
                 break
 
+    def update_record(
+        self,
+        *,
+        table_name: str,
+        record_id: str,
+        fields: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Actualiza campos de un registro en Airtable usando PATCH.
+        
+        Args:
+            table_name: Nombre de la tabla en Airtable
+            record_id: ID del registro (ej: "recXXXXXXXX")
+            fields: Diccionario con los campos a actualizar
+            
+        Returns:
+            Registro actualizado de Airtable
+        """
+        url = f"{self._base_url}/{self._creds.base_id}/{table_name}/{record_id}"
+        payload = {"fields": fields}
+        return self._request_json_with_body("PATCH", url, json_body=payload)
+
+    def _request_json_with_body(
+        self, method: str, url: str, *, json_body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Request HTTP con body JSON y backoff para 429/5xx.
+        """
+        headers = {
+            "Authorization": f"Bearer {self._creds.token}",
+            "Content-Type": "application/json",
+        }
+
+        for attempt in range(self._max_retries + 1):
+            resp = self._session.request(
+                method=method,
+                url=url,
+                json=json_body,
+                headers=headers,
+                timeout=self._timeout_s,
+            )
+
+            if 200 <= resp.status_code < 300:
+                return resp.json()
+
+            # Errores recuperables
+            if resp.status_code == 429 or 500 <= resp.status_code < 600:
+                if attempt >= self._max_retries:
+                    raise AirtableApiError(
+                        f"Airtable error {resp.status_code} tras {attempt} reintentos: {resp.text}"
+                    )
+
+                retry_after = resp.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        sleep_s = float(retry_after)
+                    except Exception:
+                        sleep_s = self._min_backoff_s
+                else:
+                    base = min(self._max_backoff_s, self._min_backoff_s * (2**attempt))
+                    sleep_s = base + (0.15 * base)
+
+                time.sleep(sleep_s)
+                continue
+
+            # Errores no recuperables
+            raise AirtableApiError(
+                f"Airtable request falló {resp.status_code}: {resp.text}"
+            )
+
+        raise AirtableApiError("Max retries exceeded")
+
     def _request_json(
         self, method: str, url: str, *, query: list[tuple[str, Any]]
     ) -> dict[str, Any]:
