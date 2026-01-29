@@ -461,8 +461,12 @@ class PlanUseCases:
             publisher = SeleniumTrainingPeaksPlanPublisher()
 
         try:
-            # Publicar en TrainingPeaks (Selenium directo) en un hilo separado para no bloquear el event loop.
-            await asyncio.to_thread(
+            # Publicar en TrainingPeaks (Selenium directo) usando el executor dedicado.
+            # run_selenium() usa ThreadPoolExecutor dedicado y semaforo global
+            # para limitar operaciones de Selenium concurrentes.
+            from app.infrastructure.driver.selenium_executor import run_selenium
+            
+            await run_selenium(
                 publisher.publish_plan,
                 plan_id=plan_id,
                 athlete_name=tp_athlete_name,
