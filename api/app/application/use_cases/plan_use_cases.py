@@ -24,9 +24,12 @@ from app.application.dto.plan_dto import (
     SafeAlternativeDTO,
     SafeAlternativeWorkoutDTO,
     PlanModificationHistoryDTO,
-    ModificationHistoryEntryDTO
+    ModificationHistoryEntryDTO,
+    ApplyTPPlanRequestDTO,
+    ApplyTPPlanResponseDTO
 )
 from app.infrastructure.repositories.plan_repository import PlanRepository
+from app.infrastructure.repositories.athlete_repository import AthleteRepository
 from app.infrastructure.autogen.plan_generator import PlanGenerator
 from app.shared.exceptions.domain import PlanNotFoundException
 from app.application.interfaces.trainingpeaks_plan_publisher import TrainingPeaksPlanPublisher
@@ -409,8 +412,9 @@ class PlanUseCases:
 
         Reglas:
         - Flujo determinista y bloqueante (la request espera el resultado).
-        - NO usa MCP: se levanta una sesión efímera de Selenium para publicar los workouts.
+        - NO usa MCP: se levanta una sesion efimera de Selenium para publicar los workouts.
         - Si cualquier paso falla, NO se marca el plan como 'applied'.
+        - Usa tp_name del atleta (obtenido via tp_sync) para seleccionarlo en TrainingPeaks.
         """
         plan = await self.repository.get_by_id(plan_id)
         if not plan:
@@ -421,6 +425,34 @@ class PlanUseCases:
 
         if not dto.workouts:
             raise ValueError("No se recibieron workouts para aplicar")
+
+        # Obtener el atleta para usar tp_name (nombre exacto en TrainingPeaks)
+        athlete_repo = AthleteRepository(self.db)
+        athlete = await athlete_repo.get_by_id(plan.athlete_id)
+        
+        if not athlete:
+            logger.error(f"[approve_and_apply] Atleta no encontrado en BD: {plan.athlete_id}")
+            raise ValueError(f"Atleta no encontrado: {plan.athlete_id}")
+        
+        # Log para debugging: mostrar nombre en BD vs nombre en TP
+        logger.info(
+            f"[approve_and_apply] Atleta encontrado: "
+            f"id='{athlete.id}', name='{athlete.name}', tp_name='{athlete.tp_name}'"
+        )
+        
+        if not athlete.tp_name:
+            logger.error(
+                f"[approve_and_apply] Atleta '{athlete.name}' (id={athlete.id}) "
+                "no tiene tp_name configurado. Abortando."
+            )
+            raise ValueError(
+                f"El atleta '{athlete.name}' no tiene tp_name configurado. "
+                "Ejecuta la sincronizacion con TrainingPeaks primero."
+            )
+        
+        # Usar tp_name (nombre exacto en TP) en lugar de plan.athlete_name
+        tp_athlete_name = athlete.tp_name
+        logger.info(f"[approve_and_apply] Usando tp_name para seleccion en TP: '{tp_athlete_name}'")
 
         if publisher is None:
             from app.infrastructure.trainingpeaks.selenium_plan_publisher import (
@@ -433,10 +465,10 @@ class PlanUseCases:
             await asyncio.to_thread(
                 publisher.publish_plan,
                 plan_id=plan_id,
-                athlete_name=plan.athlete_name,
+                athlete_name=tp_athlete_name,
                 workouts=dto.workouts,
                 start_date=plan.start_date,
-                # Por requerimiento, si no se envía carpeta se usa Neuronomy.
+                # Por requerimiento, si no se envia carpeta se usa Neuronomy.
                 folder_name=dto.folder_name or "Neuronomy",
             )
 
@@ -451,7 +483,7 @@ class PlanUseCases:
             await self.db.commit()
 
             plan = await self.repository.get_by_id(plan_id)
-            logger.info(f"Plan {plan_id} aplicado en TrainingPeaks")
+            logger.info(f"Plan {plan_id} aplicado en TrainingPeaks para atleta '{tp_athlete_name}'")
             return self._to_dto(plan)
 
         except Exception as e:
@@ -916,4 +948,93 @@ class PlanUseCases:
             workout_count=workout_count,
             created_at=plan.created_at
         )
+    
+    async def apply_tp_plan(
+        self, 
+        dto: ApplyTPPlanRequestDTO
+    ) -> ApplyTPPlanResponseDTO:
+        """
+        Aplica un Training Plan existente de TrainingPeaks a un atleta.
+        
+        Este metodo es para testing del flujo de Selenium que ejecuta
+        el TrainingPlanService.apply_training_plan().
+        
+        Flujo:
+        1. Crea sesion de Selenium efimera
+        2. Login con cookies
+        3. Abre Workout Library
+        4. Ejecuta el flujo de aplicar Training Plan
+        5. Cierra sesion
+        
+        Args:
+            dto: Datos del plan a aplicar (nombre, atleta, fecha)
+            
+        Returns:
+            ApplyTPPlanResponseDTO con el resultado de la operacion
+        """
+        from app.infrastructure.driver.driver_manager import DriverManager
+        from app.infrastructure.driver.selenium_executor import run_selenium
+        
+        session = None
+        
+        try:
+            logger.info(
+                f"Aplicando TP Plan '{dto.plan_name}' a '{dto.athlete_name}' "
+                f"desde {dto.start_date.isoformat()}"
+            )
+            
+            # 1. Crear sesion de Selenium efimera
+            session = await run_selenium(
+                DriverManager.create_session, 
+                dto.athlete_name
+            )
+            
+            # 2. Login con cookies
+            logger.info("Login en TrainingPeaks...")
+            await run_selenium(session.auth_service.login_with_cookie)
+            
+            # 3. Abrir Workout Library (para tener el panel activo)
+            logger.info("Abriendo Workout Library...")
+            await run_selenium(session.workout_service.workout_library)
+            
+            # 4. Aplicar el Training Plan usando el servicio
+            logger.info(f"Aplicando Training Plan: {dto.plan_name}")
+            await run_selenium(
+                session.training_plan_service.apply_training_plan,
+                dto.plan_name,
+                dto.athlete_name,
+                dto.start_date
+            )
+            
+            logger.info(
+                f"Training Plan '{dto.plan_name}' aplicado exitosamente "
+                f"a '{dto.athlete_name}'"
+            )
+            
+            return ApplyTPPlanResponseDTO(
+                success=True,
+                message=f"Plan '{dto.plan_name}' aplicado exitosamente",
+                plan_name=dto.plan_name,
+                athlete_name=dto.athlete_name,
+                start_date=dto.start_date.isoformat()
+            )
+            
+        except Exception as e:
+            logger.error(f"Error aplicando TP Plan: {e}")
+            return ApplyTPPlanResponseDTO(
+                success=False,
+                message=f"Error: {str(e)}",
+                plan_name=dto.plan_name,
+                athlete_name=dto.athlete_name,
+                start_date=dto.start_date.isoformat()
+            )
+            
+        finally:
+            # 5. Cerrar sesion
+            if session:
+                try:
+                    DriverManager.close_session(session.session_id)
+                    logger.info("Sesion de Selenium cerrada")
+                except Exception as e:
+                    logger.warning(f"Error cerrando sesion: {e}")
 

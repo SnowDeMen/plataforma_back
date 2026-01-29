@@ -375,3 +375,43 @@ class PlanModificationHistoryDTO(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ApplyTPPlanRequestDTO(BaseModel):
+    """
+    Solicitud para aplicar un Training Plan existente de TrainingPeaks a un atleta.
+    
+    Este endpoint es para testing del flujo de Selenium que aplica
+    planes de entrenamiento predefinidos en TrainingPeaks.
+    """
+    
+    plan_name: str = Field(
+        ..., 
+        min_length=1,
+        description="Nombre del plan en TrainingPeaks (ej: 'Test')"
+    )
+    athlete_name: str = Field(
+        ..., 
+        min_length=1,
+        description="Nombre del atleta en TrainingPeaks"
+    )
+    start_date: date = Field(
+        ..., 
+        description="Fecha de inicio del plan (ISO 8601)"
+    )
+
+    class Config:
+        from_attributes = True
+
+
+class ApplyTPPlanResponseDTO(BaseModel):
+    """Respuesta de aplicar un Training Plan de TrainingPeaks."""
+    
+    success: bool = Field(..., description="Si la operacion fue exitosa")
+    message: str = Field(..., description="Mensaje descriptivo del resultado")
+    plan_name: str = Field(..., description="Nombre del plan aplicado")
+    athlete_name: str = Field(..., description="Nombre del atleta")
+    start_date: str = Field(..., description="Fecha de inicio aplicada")
+
+    class Config:
+        from_attributes = True

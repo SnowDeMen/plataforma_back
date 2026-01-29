@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.infrastructure.driver.services.auth_service import AuthService
 from app.infrastructure.driver.services.athlete_service import AthleteService
 from app.infrastructure.driver.services.workout_service import WorkoutService
+from app.infrastructure.driver.services.training_plan_service import TrainingPlanService
 
 
 # URLs de TrainingPeaks
@@ -59,6 +60,7 @@ class DriverSession:
         self.auth_service = AuthService(driver, wait)
         self.athlete_service = AthleteService(driver, wait)
         self.workout_service = WorkoutService(driver, wait)
+        self.training_plan_service = TrainingPlanService(driver, wait)
     
     def close(self) -> None:
         """Cierra el driver y marca la sesion como inactiva."""

@@ -194,25 +194,142 @@ class AthleteService:
     def click_athlete_by_name(self, name: str, timeout: int = 10) -> None:
         """
         Da clic a la tarjeta del atleta cuyo span coincide exactamente con 'name'.
+        Incluye scroll al elemento, fallback a JavaScript click, y verificacion
+        post-click para confirmar que la seleccion ocurrio.
         
         Args:
             name: Nombre exacto del atleta
             timeout: Segundos de espera maxima
+            
+        Raises:
+            AthleteNotFoundInTPException: Si el atleta no se encuentra o la seleccion
+                                          no se verifica correctamente
         """
+        from app.shared.exceptions.domain import AthleteNotFoundInTPException
+        
         wait = WebDriverWait(self._driver, timeout)
         self.expand_all_athlete_libraries()
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "[data_cy='itemsContainer']")))
         name_literal = self._xpath_literal(name.strip())
 
+        # Usar contains para matchear 'athleteTile cf', excluyendo 'athleteTileNameContainer'
         xpath = (
             "//div[@data_cy='athleteTileName']"
             f"/span[normalize-space(text()) = {name_literal}]"
-            "/ancestor::div[contains(@class,'athleteTile')]"
+            "/ancestor::div[contains(@class,'athleteTile') and not(contains(@class,'Container'))]"
         )
 
         tile = wait.until(EC.element_to_be_clickable((By.XPATH, xpath)))
-        tile.click()
-        logger.info(f"Atleta '{name}' seleccionado")
+        
+        # 1. Scroll al elemento para asegurar visibilidad
+        self._driver.execute_script(
+            "arguments[0].scrollIntoView({block: 'center'});", 
+            tile
+        )
+        time.sleep(0.3)
+        
+        # 2. Log del elemento encontrado
+        logger.info(
+            f"Tile encontrado para '{name}': "
+            f"visible={tile.is_displayed()}, enabled={tile.is_enabled()}"
+        )
+        
+        # 3. Verificar si el atleta YA esta seleccionado (evita click innecesario)
+        current_selected = self._get_selected_athlete_name()
+        if current_selected and self._names_match(current_selected, name):
+            logger.info(f"Atleta '{name}' ya estaba seleccionado (actual: '{current_selected}')")
+            return
+        
+        logger.debug(f"Atleta actual: '{current_selected}', cambiando a '{name}'")
+        
+        # 4. Intentar click normal, si falla usar JavaScript click
+        try:
+            tile.click()
+            logger.debug(f"Click normal ejecutado en tile de '{name}'")
+        except Exception as e:
+            logger.warning(f"Click normal fallo: {e}. Intentando JavaScript click...")
+            self._driver.execute_script("arguments[0].click();", tile)
+            logger.debug(f"JavaScript click ejecutado en tile de '{name}'")
+        
+        # 5. Esperar con polling hasta que el atleta cambie al esperado (max 5s)
+        if not self._wait_for_athlete_selection(name, timeout=5):
+            logger.error(f"Verificacion de seleccion fallo para '{name}'")
+            raise AthleteNotFoundInTPException(name, [name])
+        
+        logger.info(f"Atleta '{name}' seleccionado y verificado")
+    
+    def _get_selected_athlete_name(self) -> str:
+        """
+        Obtiene el nombre del atleta actualmente seleccionado.
+        
+        Busca en el elemento .selectedAthleteName span que muestra
+        el nombre del atleta seleccionado en TrainingPeaks.
+        
+        Returns:
+            str: Nombre del atleta seleccionado, o string vacio si no se encuentra
+        """
+        try:
+            selected_element = self._driver.find_element(
+                By.CSS_SELECTOR, 
+                "div.selectedAthleteName span"
+            )
+            return selected_element.text.strip()
+        except NoSuchElementException:
+            return ""
+        except Exception as e:
+            logger.debug(f"Error obteniendo nombre seleccionado: {e}")
+            return ""
+    
+    def _wait_for_athlete_selection(self, expected_name: str, timeout: int = 5) -> bool:
+        """
+        Espera con polling hasta que el atleta seleccionado coincida con el esperado.
+        
+        Hace polling cada 0.1 segundos hasta que el nombre en .selectedAthleteName
+        coincida con expected_name, o hasta que se agote el timeout.
+        
+        Args:
+            expected_name: Nombre esperado del atleta
+            timeout: Segundos maximos de espera
+            
+        Returns:
+            bool: True si el atleta esperado fue seleccionado, False si timeout
+        """
+        max_attempts = timeout * 10  # 10 intentos por segundo
+        
+        for attempt in range(max_attempts):
+            actual_name = self._get_selected_athlete_name()
+            
+            if actual_name and self._names_match(actual_name, expected_name):
+                logger.info(
+                    f"Verificacion OK (intento {attempt + 1}): "
+                    f"'{actual_name}' coincide con '{expected_name}'"
+                )
+                return True
+            
+            time.sleep(0.1)
+        
+        # Timeout - mostrar el nombre actual para debug
+        final_name = self._get_selected_athlete_name()
+        logger.warning(
+            f"Timeout esperando seleccion: actual='{final_name}', "
+            f"esperado='{expected_name}' (despues de {timeout}s)"
+        )
+        return False
+    
+    def _verify_athlete_selected(self, expected_name: str, timeout: int = 5) -> bool:
+        """
+        Verifica que el atleta fue seleccionado correctamente.
+        
+        Wrapper para compatibilidad. Usa _wait_for_athlete_selection internamente.
+        
+        Args:
+            expected_name: Nombre esperado del atleta
+            timeout: Segundos de espera maxima
+            
+        Returns:
+            bool: True si el nombre coincide, False si no
+        """
+        return self._wait_for_athlete_selection(expected_name, timeout)
     
     def select_athlete(self, name: str, timeout: int = 5) -> None:
         """
@@ -753,18 +870,114 @@ class AthleteService:
             return False
     
     # =========================================================================
+    # UTILIDADES PARA COMPARACION DE NOMBRES
+    # =========================================================================
+    
+    def _normalize_name(self, name: str) -> str:
+        """
+        Normaliza un nombre para comparacion: minusculas, sin acentos, sin espacios extra.
+        
+        Args:
+            name: Nombre a normalizar
+            
+        Returns:
+            str: Nombre normalizado
+        """
+        import unicodedata
+        
+        if not name:
+            return ""
+        
+        # Convertir a minusculas
+        normalized = name.lower().strip()
+        
+        # Remover acentos
+        normalized = unicodedata.normalize('NFD', normalized)
+        normalized = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+        
+        # Normalizar espacios multiples a uno solo
+        normalized = ' '.join(normalized.split())
+        
+        return normalized
+    
+    def _names_match(self, name1: str, name2: str) -> bool:
+        """
+        Compara si el primer nombre de ambos strings coincide.
+        
+        Solo compara el primer nombre (primera palabra) de cada string,
+        lo que permite busquedas rapidas sin ambiguedad por apellidos.
+        
+        Args:
+            name1: Primer nombre completo
+            name2: Segundo nombre completo
+            
+        Returns:
+            bool: True si el primer nombre coincide, False en caso contrario
+        """
+        n1 = self._normalize_name(name1)
+        n2 = self._normalize_name(name2)
+        
+        if not n1 or not n2:
+            return False
+        
+        # Extraer primer nombre de cada uno
+        words1 = n1.split()
+        words2 = n2.split()
+        
+        first1 = words1[0] if words1 else ""
+        first2 = words2[0] if words2 else ""
+        
+        return first1 == first2
+    
+    def _filter_tiles_by_name(
+        self, 
+        tiles: list, 
+        expected_name: str, 
+        timeout: int = 5
+    ) -> list:
+        """
+        Filtra tiles de atletas que coincidan con el nombre esperado.
+        
+        Args:
+            tiles: Lista de WebElements de tiles de atletas
+            expected_name: Nombre esperado del atleta
+            timeout: Timeout para operaciones
+            
+        Returns:
+            list: Lista de tuplas (tile, tile_name) que coinciden con el nombre
+        """
+        candidates = []
+        
+        for tile in tiles:
+            tile_name = self.get_athlete_name_from_tile(tile)
+            if self._names_match(tile_name, expected_name):
+                candidates.append((tile, tile_name))
+                logger.debug(f"Candidato encontrado: '{tile_name}' coincide con '{expected_name}'")
+        
+        return candidates
+    
+    # =========================================================================
     # METODO PRINCIPAL DE BUSQUEDA POR USERNAME
     # =========================================================================
     
-    def _search_in_current_group(self, username: str, group_name: str, timeout: int = 10) -> dict:
+    def _search_in_current_group(
+        self, 
+        username: str, 
+        group_name: str, 
+        expected_name: str = None,
+        timeout: int = 10
+    ) -> dict:
         """
         Busca un username en los atletas del grupo actualmente seleccionado.
         
-        Este metodo no cambia de grupo, solo itera los atletas visibles.
+        OPTIMIZACION: Si se proporciona expected_name, primero filtra tiles por
+        nombre visible (sin abrir modales). Solo abre modales de los candidatos.
+        Esto reduce el tiempo de O(n) a O(1) en el caso promedio.
         
         Args:
-            username: Username a buscar (case-sensitive)
+            username: Username a buscar (case-insensitive)
             group_name: Nombre del grupo actual (para logging y resultado)
+            expected_name: Nombre esperado del atleta (opcional, para busqueda rapida)
             timeout: Segundos de espera por operacion
             
         Returns:
@@ -787,7 +1000,72 @@ class AthleteService:
         
         logger.info(f"Buscando en grupo '{group_name}' con {len(tiles)} atletas")
         
-        # Iterar por cada atleta en el grupo
+        # OPTIMIZACION: Si tenemos expected_name, filtrar primero por nombre visible
+        if expected_name:
+            candidates = self._filter_tiles_by_name(tiles, expected_name, timeout)
+            
+            if candidates:
+                logger.info(
+                    f"Busqueda optimizada: {len(candidates)} candidatos de {len(tiles)} atletas "
+                    f"coinciden con '{expected_name}'"
+                )
+                
+                # Solo verificar los candidatos (abre modal solo de estos)
+                for tile, tile_name in candidates:
+                    logger.debug(f"Verificando candidato: {tile_name}")
+                    
+                    # Click en settings
+                    if not self.click_athlete_settings_button(tile, timeout):
+                        logger.warning(f"No se pudo abrir settings para {tile_name}")
+                        continue
+                    
+                    # Esperar modal
+                    if not self.wait_for_settings_modal(timeout):
+                        logger.warning(f"Modal no se abrio para {tile_name}")
+                        continue
+                    
+                    result["tiles_checked"] += 1
+                    
+                    # Extraer username del modal
+                    modal_username = self.get_username_from_modal()
+                    
+                    # Comparar usernames (case-insensitive)
+                    if modal_username.lower() == username.lower():
+                        # Match encontrado
+                        full_name = self.get_full_name_from_modal()
+                        
+                        result["found"] = True
+                        result["full_name"] = full_name
+                        
+                        print(f"El nombre del usuario {username} es {full_name}")
+                        logger.info(
+                            f"Match encontrado (optimizado): usuario '{username}' = "
+                            f"'{full_name}' en grupo '{group_name}'"
+                        )
+                        
+                        self.close_settings_modal()
+                        return result
+                    
+                    # No hay match, cerrar modal
+                    self.close_settings_modal()
+                    time.sleep(0.2)
+                
+                # Candidatos verificados pero ninguno coincidio
+                logger.info(
+                    f"Candidatos por nombre no coincidieron con username. "
+                    f"Verificados: {result['tiles_checked']}"
+                )
+                return result
+            else:
+                # No hay candidatos por nombre, el atleta no esta en este grupo
+                logger.info(
+                    f"No hay atletas con nombre similar a '{expected_name}' en grupo {group_name}"
+                )
+                return result
+        
+        # FALLBACK: Sin expected_name, iterar todos los atletas (comportamiento original)
+        logger.info("Busqueda sin expected_name: verificando todos los atletas...")
+        
         for i, tile in enumerate(tiles):
             tile_name = self.get_athlete_name_from_tile(tile)
             logger.debug(f"Verificando atleta {i+1}/{len(tiles)}: {tile_name}")
@@ -807,19 +1085,17 @@ class AthleteService:
             # Extraer username del modal
             modal_username = self.get_username_from_modal()
             
-            # Comparar usernames
-            if modal_username == username:
+            # Comparar usernames (case-insensitive)
+            if modal_username.lower() == username.lower():
                 # Match encontrado
                 full_name = self.get_full_name_from_modal()
                 
                 result["found"] = True
                 result["full_name"] = full_name
                 
-                # Imprimir en consola
                 print(f"El nombre del usuario {username} es {full_name}")
                 logger.info(f"Match encontrado: usuario '{username}' = '{full_name}' en grupo '{group_name}'")
                 
-                # Cerrar modal y retornar
                 self.close_settings_modal()
                 return result
             
@@ -830,18 +1106,28 @@ class AthleteService:
         logger.info(f"No se encontro match en grupo {group_name}")
         return result
     
-    def find_athlete_by_username(self, username: str, timeout: int = 10) -> dict:
+    def find_athlete_by_username(
+        self, 
+        username: str, 
+        expected_name: str = None,
+        timeout: int = 10
+    ) -> dict:
         """
         Busca un atleta por su username iterando por todos los grupos y atletas.
         
-        El flujo optimizado es:
-        1. Busca primero en el grupo actual (My Athletes) sin abrir dropdown
+        OPTIMIZACION: Si se proporciona expected_name, la busqueda es mucho mas rapida
+        porque primero filtra por nombre visible (sin abrir modales) y solo verifica
+        los candidatos que coinciden. Esto reduce el tiempo de minutos a segundos.
+        
+        Flujo:
+        1. Busca primero en el grupo actual (My Athletes)
         2. Si no hay match, abre dropdown y obtiene lista de grupos
         3. Itera por los grupos restantes buscando el username
         4. Si hay match: extrae nombre completo, imprime en consola, retorna
         
         Args:
-            username: Username a buscar (case-sensitive)
+            username: Username a buscar (case-insensitive)
+            expected_name: Nombre esperado del atleta (opcional, acelera la busqueda)
             timeout: Segundos de espera por operacion
             
         Returns:
@@ -850,11 +1136,19 @@ class AthleteService:
         """
         total_tiles_checked = 0
         
+        if expected_name:
+            logger.info(f"Busqueda optimizada: username='{username}', expected_name='{expected_name}'")
+        
         # 1. Buscar primero en el grupo actual (My Athletes por default)
         current_group = "My Athletes"
         logger.info(f"Buscando en grupo actual: {current_group}")
         
-        result = self._search_in_current_group(username, current_group, timeout)
+        result = self._search_in_current_group(
+            username=username, 
+            group_name=current_group, 
+            expected_name=expected_name,
+            timeout=timeout
+        )
         total_tiles_checked += result["tiles_checked"]
         
         if result["found"]:
@@ -891,7 +1185,12 @@ class AthleteService:
             time.sleep(1)
             
             # Buscar en este grupo
-            result = self._search_in_current_group(username, group_name, timeout)
+            result = self._search_in_current_group(
+                username=username, 
+                group_name=group_name, 
+                expected_name=expected_name,
+                timeout=timeout
+            )
             total_tiles_checked += result["tiles_checked"]
             
             if result["found"]:
