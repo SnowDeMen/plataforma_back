@@ -170,12 +170,12 @@ async def start_session(
 async def sync_tp_username(
     username: str,
     athlete_id: str,
-    db: AsyncSession = Depends(get_db)
+    use_cases: TPSyncUseCases = Depends(get_tp_sync_use_cases)
 ) -> dict:
     """
     Busca un atleta en TrainingPeaks por username y guarda su nombre (tp_name).
     
-    Flujo:
+    Flujo (implementado en TPSyncUseCases):
     1. Busca el atleta por username en TrainingPeaks
     2. Si lo encuentra, obtiene el nombre del atleta en TP
     3. Guarda el nombre como tp_name en PostgreSQL
@@ -184,114 +184,12 @@ async def sync_tp_username(
     Args:
         username: Username de TrainingPeaks (tp_username)
         athlete_id: ID del atleta en la base de datos
-        db: Sesion de base de datos
+        use_cases: Casos de uso de sincronizacion TP
     
     Returns:
         Dict con success, tp_name, message
     """
-    from app.infrastructure.driver.services.auth_service import AuthService
-    from app.infrastructure.driver.services.athlete_service import AthleteService
-    from app.infrastructure.repositories.athlete_repository import AthleteRepository
-    from app.infrastructure.external.airtable_sync.airtable_client import (
-        AirtableClient, AirtableCredentials
-    )
-    import os
-    
-    driver = None
-    result = {
-        "success": False,
-        "message": "",
-        "username": username,
-        "tp_name": None,
-        "group": None
-    }
-    
-    try:
-        # 1. Crear driver navegando a #home
-        logger.info(f"[sync-tp-username] Buscando atleta con username: {username}")
-        driver, wait = DriverManager._create_driver_for_home()
-        
-        # Inicializar servicios
-        auth_service = AuthService(driver, wait)
-        athlete_service = AthleteService(driver, wait)
-        
-        # 2. Login en TrainingPeaks
-        logger.info("[sync-tp-username] Haciendo login...")
-        auth_service.login_with_cookie()
-        
-        # 3. Navegar a #home
-        logger.info("[sync-tp-username] Navegando a #home...")
-        athlete_service.navigate_to_home()
-        
-        # 4. Buscar por username
-        search_result = athlete_service.find_athlete_by_username(username)
-        
-        if not search_result["found"]:
-            result["message"] = f"No se encontro atleta con username: {username}"
-            return result
-        
-        tp_name = search_result["full_name"]
-        result["tp_name"] = tp_name
-        result["group"] = search_result["group"]
-        
-        # 5. Guardar en PostgreSQL
-        logger.info(f"[sync-tp-username] Guardando tp_name: {tp_name} para atleta {athlete_id}")
-        repo = AthleteRepository(db)
-        athlete = await repo.get_by_id(athlete_id)
-        
-        if not athlete:
-            result["message"] = f"Atleta no encontrado en DB: {athlete_id}"
-            return result
-        
-        # Actualizar tp_name en la base de datos
-        await repo.update(athlete_id, {"tp_name": tp_name})
-        await db.commit()
-        
-        # 6. Actualizar en Airtable (usando IDs directos)
-        airtable_record_id = athlete.id  # El ID del atleta es el record_id de Airtable
-        AIRTABLE_TABLE_ID = "tblMNRYRfYTWYpc5o"  # Table ID de Formulario_Inicial
-        TP_NAME_FIELD_ID = "fldmVrBQxHtlN4qXL"  # Field ID de tp_name
-        
-        try:
-            airtable_token = os.environ.get("AIRTABLE_TOKEN")
-            airtable_base_id = os.environ.get("AIRTABLE_BASE_ID")
-            
-            if airtable_token and airtable_base_id:
-                client = AirtableClient(
-                    AirtableCredentials(token=airtable_token, base_id=airtable_base_id)
-                )
-                logger.info(f"[sync-tp-username] Actualizando Airtable: table={AIRTABLE_TABLE_ID}, record={airtable_record_id}")
-                client.update_record(
-                    table_name=AIRTABLE_TABLE_ID,
-                    record_id=airtable_record_id,
-                    fields={TP_NAME_FIELD_ID: tp_name}
-                )
-                logger.info(f"[sync-tp-username] Airtable actualizado exitosamente: {airtable_record_id} -> {tp_name}")
-            else:
-                logger.warning("[sync-tp-username] Credenciales de Airtable no configuradas")
-        except Exception as e:
-            logger.exception(f"[sync-tp-username] Error actualizando Airtable: {e}")
-            # No fallar el endpoint si Airtable falla
-        
-        result["success"] = True
-        result["message"] = f"Sincronizado exitosamente: {tp_name}"
-        logger.info(f"[sync-tp-username] Exito: {username} -> {tp_name}")
-        
-        return result
-        
-    except Exception as e:
-        logger.exception(f"[sync-tp-username] Error: {e}")
-        result["message"] = f"Error: {str(e)}"
-        return result
-        
-    finally:
-        # Cerrar driver
-        if driver:
-            try:
-                driver.quit()
-                logger.info("[test-home-settings] Driver cerrado")
-            except Exception:
-                pass
+    return await use_cases.execute_sync_process(username=username, athlete_id=athlete_id)
 
 
 # ============================================================================

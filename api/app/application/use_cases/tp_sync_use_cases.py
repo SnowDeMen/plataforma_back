@@ -25,6 +25,7 @@ from app.infrastructure.driver.selenium_executor import run_selenium
 from app.infrastructure.driver.services.auth_service import AuthService
 from app.infrastructure.driver.services.athlete_service import AthleteService
 from app.infrastructure.repositories.athlete_repository import AthleteRepository
+from typing import Callable, Awaitable
 
 
 @dataclass
@@ -139,47 +140,55 @@ class TPSyncUseCases:
                 setattr(job, k, v)
             job.updated_at = datetime.now(timezone.utc)
     
-    async def _run_job(self, *, job_id: str, username: str, athlete_id: str) -> None:
+    async def execute_sync_process(
+        self,
+        username: Optional[str],
+        athlete_id: str,
+        progress_callback: Optional[Callable[[str, int], Awaitable[None]]] = None,
+    ) -> Dict[str, Any]:
         """
-        Ejecuta el flujo de sincronizacion con TrainingPeaks.
+        Ejecuta la logica de sincronizacion de forma directa.
         
-        Flujo:
-        1. Obtiene el nombre del atleta de la BD (para busqueda optimizada)
-        2. Crea driver navegando a #home (en thread para no bloquear)
-        3. Hace login en TrainingPeaks
-        4. Busca el atleta por username usando el nombre como hint (busqueda rapida)
-        5. Si lo encuentra, obtiene el nombre del atleta en TP (tp_name)
-        6. Guarda el nombre como tp_name en PostgreSQL
-        7. Actualiza el campo tp_name en Airtable
-        
-        Las operaciones de Selenium se ejecutan en threads separados via run_selenium()
-        para no bloquear el event loop y permitir que el healthcheck responda.
+        Args:
+            username: Username de TrainingPeaks
+            athlete_id: ID del atleta en BD
+            progress_callback: Callback opcional para reportar progreso (msg, percent)
+            
+        Returns:
+            Dict con resultado de la operacion (success, message, tp_name, group)
         """
         driver = None
         expected_name = None
+
+        result = {
+            "success": False,
+            "message": "",
+            "username": username,
+            "tp_name": None,
+            "group": None
+        }
+        
+        full_name_db = None
+        
+        # Helper para reportar progreso si existe callback
+        async def report(msg: str, prog: int):
+            if progress_callback:
+                await progress_callback(msg, prog)
         
         try:
             # 0. Obtener el nombre del atleta de la BD para busqueda optimizada
-            await self._update_job(
-                job_id, 
-                message="Obteniendo datos del atleta...", 
-                progress=2
-            )
+            await report("Obteniendo datos del atleta...", 2)
             
             async with AsyncSessionLocal() as db:
                 repo = AthleteRepository(db)
                 athlete = await repo.get_by_id(athlete_id)
                 if athlete:
                     expected_name = athlete.name
-                    logger.info(f"[tp-sync-job:{job_id}] Nombre para busqueda optimizada: {expected_name}")
+                    full_name_db = athlete.full_name
             
             # 1. Crear driver navegando a #home
-            await self._update_job(
-                job_id, 
-                message="Creando sesion de navegador...", 
-                progress=5
-            )
-            logger.info(f"[tp-sync-job:{job_id}] Buscando atleta con username: {username}")
+            await report("Creando sesion de navegador...", 5)
+            logger.info(f"[tp-sync] Buscando atleta con username: {username}")
             driver, wait = await run_selenium(DriverManager._create_driver_for_home)
             
             # Inicializar servicios
@@ -187,88 +196,92 @@ class TPSyncUseCases:
             athlete_service = AthleteService(driver, wait)
             
             # 2. Login en TrainingPeaks
-            await self._update_job(
-                job_id, 
-                message="Iniciando sesion en TrainingPeaks...", 
-                progress=15
-            )
-            logger.info(f"[tp-sync-job:{job_id}] Haciendo login...")
+            await report("Iniciando sesion en TrainingPeaks...", 15)
+            logger.info(f"[tp-sync] Haciendo login...")
             await run_selenium(auth_service.login_with_cookie)
             
             # 3. Navegar a #home
-            await self._update_job(
-                job_id, 
-                message="Navegando a biblioteca de atletas...", 
-                progress=25
-            )
-            logger.info(f"[tp-sync-job:{job_id}] Navegando a #home...")
+            await report("Navegando a biblioteca de atletas...", 25)
+            logger.info(f"[tp-sync] Navegando a #home...")
             await run_selenium(athlete_service.navigate_to_home)
             
-            # 4. Buscar por username (optimizado si tenemos expected_name)
-            if expected_name:
-                await self._update_job(
-                    job_id, 
-                    message=f"Buscando atleta '{expected_name}' (busqueda optimizada)...", 
-                    progress=35
+            # 4. Buscar Atleta
+            search_result = {"found": False}
+            
+            if username:
+                # Caso A: Tenemos username, buscamos directamente
+                if expected_name:
+                    await report(f"Verificando atleta '{expected_name}' con usuario '{username}'...", 35)
+                else:
+                    await report(f"Buscando usuario '{username}' (esto puede tardar)...", 35)
+                
+                search_result = await run_selenium(
+                    athlete_service.find_athlete_by_username, 
+                    username,
+                    expected_name
                 )
             else:
-                await self._update_job(
-                    job_id, 
-                    message="Buscando atleta por username (esto puede tardar)...", 
-                    progress=35
+                # Caso B: No tenemos username, descubrimos por nombre
+                await report(f"Descubriendo usuario TP para '{expected_name}'...", 35)
+                
+                discovered_username = await run_selenium(
+                    athlete_service.discover_username,
+                    athlete_name=expected_name,
+                    full_name=full_name_db
                 )
-            
-            search_result = await run_selenium(
-                athlete_service.find_athlete_by_username, 
-                username,
-                expected_name  # Pasamos el nombre para busqueda rapida
-            )
+                
+                if discovered_username:
+                    username = discovered_username
+                    result["username"] = username
+                    # Ahora buscamos detalles con el username descubierto
+                    search_result = await run_selenium(
+                        athlete_service.find_athlete_by_username, 
+                        username,
+                        expected_name
+                    )
             
             if not search_result["found"]:
-                await self._update_job(
-                    job_id,
-                    status="failed",
-                    progress=100,
-                    message=f"No se encontro atleta con username: {username}",
-                    error=f"Atleta no encontrado en TrainingPeaks: {username}",
-                    completed_at=datetime.now(timezone.utc),
-                )
-                logger.warning(f"[tp-sync-job:{job_id}] No se encontro: {username}")
-                return
+                error_msg = "No se encontro atleta en TrainingPeaks"
+                if username:
+                    error_msg += f" con usuario '{username}'"
+                
+                result["message"] = error_msg
+                logger.warning(f"[tp-sync] {error_msg}")
+                return result
             
+            # Si descubrimos el username, guardarlo en BD
+            if athlete and not athlete.tp_username and username:
+                async with AsyncSessionLocal() as db:
+                    repo = AthleteRepository(db)
+                    await repo.update(athlete_id, {"tp_username": username})
+                    await db.commit()
+                
+                # También actualizar en Airtable
+                try:
+                    self._sync_airtable_username(None, athlete_id, username)
+                except Exception:
+                    pass
+
             tp_name = search_result["full_name"]
             group = search_result["group"]
             
-            await self._update_job(
-                job_id, 
-                message=f"Atleta encontrado: {tp_name}", 
-                progress=60,
-                tp_name=tp_name,
-                group=group,
-            )
-            logger.info(f"[tp-sync-job:{job_id}] Encontrado: {tp_name} en grupo {group}")
+            result["tp_name"] = tp_name
+            result["group"] = group
+            
+            await report(f"Atleta encontrado: {tp_name}", 60)
+            logger.info(f"[tp-sync] Encontrado: {tp_name} en grupo {group}")
             
             # 5. Guardar en PostgreSQL
-            await self._update_job(
-                job_id, 
-                message="Guardando en base de datos...", 
-                progress=75
-            )
+            await report("Guardando en base de datos...", 75)
             
+            airtable_record_id = None
             async with AsyncSessionLocal() as db:
                 repo = AthleteRepository(db)
                 athlete = await repo.get_by_id(athlete_id)
                 
                 if not athlete:
-                    await self._update_job(
-                        job_id,
-                        status="failed",
-                        progress=100,
-                        message=f"Atleta no encontrado en DB: {athlete_id}",
-                        error=f"Atleta no existe en la base de datos: {athlete_id}",
-                        completed_at=datetime.now(timezone.utc),
-                    )
-                    return
+                    result["message"] = f"Atleta no encontrado en DB: {athlete_id}"
+                    return result
                 
                 # Actualizar tp_name en la base de datos
                 await repo.update(athlete_id, {"tp_name": tp_name})
@@ -277,48 +290,85 @@ class TPSyncUseCases:
                 # Guardar el ID de Airtable para el siguiente paso
                 airtable_record_id = athlete.id
             
-            logger.info(f"[tp-sync-job:{job_id}] Guardado en PostgreSQL: {athlete_id}")
+            logger.info(f"[tp-sync] Guardado en PostgreSQL: {athlete_id}")
             
             # 6. Actualizar en Airtable
-            await self._update_job(
-                job_id, 
-                message="Actualizando Airtable...", 
-                progress=90
-            )
+            await report("Actualizando Airtable...", 90)
             
-            await self._sync_airtable(job_id, airtable_record_id, tp_name)
+            if airtable_record_id:
+                try:
+                    await self._sync_airtable(None, airtable_record_id, tp_name)
+                except Exception as e:
+                    logger.error(f"[tp-sync] Error airtable: {e}")
             
             # Completado exitosamente
-            await self._update_job(
-                job_id,
-                status="completed",
-                progress=100,
-                message=f"Sincronizado exitosamente: {tp_name}",
-                completed_at=datetime.now(timezone.utc),
-            )
-            logger.info(f"[tp-sync-job:{job_id}] Completado: {username} -> {tp_name}")
+            result["success"] = True
+            result["message"] = f"Sincronizado exitosamente: {tp_name}"
+            
+            return result
             
         except Exception as e:
-            logger.exception(f"[tp-sync-job:{job_id}] Error: {e}")
-            await self._update_job(
-                job_id,
-                status="failed",
-                progress=100,
-                message="Error durante la sincronizacion",
-                error=str(e),
-                completed_at=datetime.now(timezone.utc),
-            )
+            logger.exception(f"[tp-sync] Error critico: {e}")
+            result["message"] = str(e)
+            return result
             
         finally:
             # Cerrar driver
             if driver:
                 try:
                     await run_selenium(driver.quit)
-                    logger.info(f"[tp-sync-job:{job_id}] Driver cerrado")
+                    logger.info(f"[tp-sync] Driver cerrado")
                 except Exception:
                     pass
+
+    async def _run_job(self, *, job_id: str, username: str, athlete_id: str) -> None:
+        """
+        Ejecuta el job en background usando execute_sync_process.
+        """
+        try:
+            # Definir callback para actualizar el job
+            async def job_callback(msg: str, prog: int):
+                await self._update_job(job_id, message=msg, progress=prog)
+
+            # Ejecutar logica principal
+            result = await self.execute_sync_process(
+                username=username, 
+                athlete_id=athlete_id, 
+                progress_callback=job_callback
+            )
+            
+            if result["success"]:
+                await self._update_job(
+                    job_id,
+                    status="completed",
+                    progress=100,
+                    message=result["message"],
+                    tp_name=result["tp_name"],
+                    group=result["group"],
+                    completed_at=datetime.now(timezone.utc),
+                )
+            else:
+                await self._update_job(
+                    job_id,
+                    status="failed",
+                    progress=100,
+                    message=result["message"],
+                    error=result["message"],
+                    completed_at=datetime.now(timezone.utc),
+                )
+                
+        except Exception as e:
+            logger.exception(f"[tp-sync-job:{job_id}] Error wrapper: {e}")
+            await self._update_job(
+                job_id,
+                status="failed",
+                progress=100,
+                message="Error inesperado en job",
+                error=str(e),
+                completed_at=datetime.now(timezone.utc),
+            )
     
-    async def _sync_airtable(self, job_id: str, record_id: str, tp_name: str) -> None:
+    async def _sync_airtable(self, job_id: str | None, record_id: str, tp_name: str) -> None:
         """
         Actualiza el campo tp_name en Airtable.
         
@@ -331,6 +381,8 @@ class TPSyncUseCases:
         AIRTABLE_TABLE_ID = "tblMNRYRfYTWYpc5o"  # Table ID de Formulario_Inicial
         TP_NAME_FIELD_ID = "fldmVrBQxHtlN4qXL"  # Field ID de tp_name
         
+        job_tag = f"[tp-sync-job:{job_id}]" if job_id else "[tp-sync]"
+        
         try:
             airtable_token = os.environ.get("AIRTABLE_TOKEN")
             airtable_base_id = os.environ.get("AIRTABLE_BASE_ID")
@@ -339,15 +391,37 @@ class TPSyncUseCases:
                 client = AirtableClient(
                     AirtableCredentials(token=airtable_token, base_id=airtable_base_id)
                 )
-                logger.info(f"[tp-sync-job:{job_id}] Actualizando Airtable: record={record_id}")
+                logger.info(f"{job_tag} Actualizando Airtable: record={record_id}")
                 client.update_record(
                     table_name=AIRTABLE_TABLE_ID,
                     record_id=record_id,
                     fields={TP_NAME_FIELD_ID: tp_name}
                 )
-                logger.info(f"[tp-sync-job:{job_id}] Airtable actualizado: {record_id} -> {tp_name}")
+                logger.info(f"{job_tag} Airtable actualizado: {record_id} -> {tp_name}")
             else:
-                logger.warning(f"[tp-sync-job:{job_id}] Credenciales de Airtable no configuradas")
+                logger.warning(f"{job_tag} Credenciales de Airtable no configuradas")
         except Exception as e:
             # No fallar el job si Airtable falla
-            logger.exception(f"[tp-sync-job:{job_id}] Error actualizando Airtable: {e}")
+            logger.exception(f"{job_tag} Error actualizando Airtable: {e}")
+
+    async def _sync_airtable_username(self, job_id: str | None, record_id: str, tp_username: str) -> None:
+        """Actualiza el username en Airtable."""
+        from app.infrastructure.external.airtable_sync.airtable_client import (
+            AirtableClient, AirtableCredentials
+        )
+        try:
+            airtable_token = os.environ.get("AIRTABLE_TOKEN")
+            airtable_base_id = os.environ.get("AIRTABLE_BASE_ID")
+            
+            if airtable_token and airtable_base_id:
+                client = AirtableClient(
+                   AirtableCredentials(token=airtable_token, base_id=airtable_base_id)
+                )
+                # Nota: Asumiendo que el campo se llama "Cuenta TrainingPeaks" como en sync_use_cases.py
+                client.update_record(
+                    table_name=settings.AIRTABLE_TABLE_NAME, 
+                    record_id=record_id,
+                    fields={"Cuenta TrainingPeaks": tp_username}
+                )
+        except Exception:
+            pass
