@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     AIRTABLE_PG_SCHEMA: str = Field(default="airtable")
     AIRTABLE_PG_TABLE: str = Field(default="")
     
+    # Athlete Training Generation
+    ATHLETE_TRAINING_GEN_INTERVAL_HOURS: float = Field(default=12.0)
+    ATHLETE_TRAINING_GEN_THRESHOLD_DAYS: int = Field(default=28)
+    ATHLETE_TRAINING_GEN_WEEKS: int = Field(default=4)
+    
     # Logging
     LOG_LEVEL: str = Field(default="INFO")
     LOG_FILE: str = Field(default="logs/app.log")
