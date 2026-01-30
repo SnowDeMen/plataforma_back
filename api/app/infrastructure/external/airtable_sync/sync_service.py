@@ -14,9 +14,8 @@ Estrategia de idempotencia:
 """
 
 from __future__ import annotations
-
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
@@ -82,6 +81,7 @@ def map_airtable_record_to_row(
 class SyncResult:
     upserted_rows: int
     max_last_modified: Optional[datetime]
+    new_record_ids: list[str] = field(default_factory=list)
 
 
 class AirtableToPostgresSync:
@@ -118,7 +118,7 @@ class AirtableToPostgresSync:
 
             if not self._pg.try_advisory_lock(conn, pg_lock_key):
                 logger.warning("Sync ya está corriendo (advisory lock ocupado). Saliendo.")
-                return SyncResult(upserted_rows=0, max_last_modified=None)
+                return SyncResult(upserted_rows=0, max_last_modified=None, new_record_ids=[])
 
             state = self._pg.load_or_init_state(
                 conn,
@@ -164,6 +164,7 @@ class AirtableToPostgresSync:
         synced_at = utc_now()
         max_last_modified: Optional[datetime] = None
         total_upserted = 0
+        new_record_ids: list[str] = []
 
         # Si el caller no pasó whitelist, pedimos:
         # - last_modified_field (siempre)
@@ -187,27 +188,35 @@ class AirtableToPostgresSync:
             )
 
             if len(batch) >= self._upsert_batch_size:
-                total_upserted += self._pg.upsert_rows(
+                upserted_batch_ids = self._pg.upsert_rows(
                     conn,
                     target_schema=config.target_schema,
                     target_table=config.target_table,
                     rows=batch,
                     conflict_pk=config.record_id_column,
                 )
+                new_record_ids.extend(upserted_batch_ids)
+                total_upserted += len(batch) # Not accurate for upserts, but matching logic of previous rowcount or 0
                 batch.clear()
 
         if batch:
-            total_upserted += self._pg.upsert_rows(
+            upserted_batch_ids = self._pg.upsert_rows(
                 conn,
                 target_schema=config.target_schema,
                 target_table=config.target_table,
                 rows=batch,
                 conflict_pk=config.record_id_column,
             )
+            new_record_ids.extend(upserted_batch_ids)
+            total_upserted += len(batch)
             batch.clear()
 
-        logger.info(f"Sync completado. upserts={total_upserted}, max_last_modified={max_last_modified}")
-        return SyncResult(upserted_rows=total_upserted, max_last_modified=max_last_modified)
+        logger.info(f"Sync completado. upserts={total_upserted}, new_inserts={len(new_record_ids)}, max_last_modified={max_last_modified}")
+        return SyncResult(
+            upserted_rows=total_upserted, 
+            max_last_modified=max_last_modified,
+            new_record_ids=new_record_ids
+        )
 
 
 def build_from_env(

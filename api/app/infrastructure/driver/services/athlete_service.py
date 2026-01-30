@@ -6,10 +6,12 @@ import time
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from loguru import logger
+from typing import Optional
 
 
 class AthleteService:
@@ -29,7 +31,7 @@ class AthleteService:
         self._driver = driver
         self._wait = wait
     
-    def is_athlete_library_open(self, timeout: int = 5) -> bool:
+    def is_athlete_library_open(self, timeout: int = 10) -> bool:
         """
         Verifica si la pestana 'Athlete Library' esta abierta (activa).
 
@@ -252,7 +254,7 @@ class AthleteService:
             logger.debug(f"JavaScript click ejecutado en tile de '{name}'")
         
         # 5. Esperar con polling hasta que el atleta cambie al esperado (max 5s)
-        if not self._wait_for_athlete_selection(name, timeout=5):
+        if not self._wait_for_athlete_selection(name, timeout=10):
             logger.error(f"Verificacion de seleccion fallo para '{name}'")
             raise AthleteNotFoundInTPException(name, [name])
         
@@ -280,7 +282,7 @@ class AthleteService:
             logger.debug(f"Error obteniendo nombre seleccionado: {e}")
             return ""
     
-    def _wait_for_athlete_selection(self, expected_name: str, timeout: int = 5) -> bool:
+    def _wait_for_athlete_selection(self, expected_name: str, timeout: int = 10) -> bool:
         """
         Espera con polling hasta que el atleta seleccionado coincida con el esperado.
         
@@ -316,7 +318,7 @@ class AthleteService:
         )
         return False
     
-    def _verify_athlete_selected(self, expected_name: str, timeout: int = 5) -> bool:
+    def _verify_athlete_selected(self, expected_name: str, timeout: int = 10) -> bool:
         """
         Verifica que el atleta fue seleccionado correctamente.
         
@@ -331,7 +333,7 @@ class AthleteService:
         """
         return self._wait_for_athlete_selection(expected_name, timeout)
     
-    def select_athlete(self, name: str, timeout: int = 5) -> None:
+    def select_athlete(self, name: str, timeout: int = 10) -> None:
         """
         Realiza el flujo completo de seleccion de un atleta con estrategia de reintentos.
         Intenta varias combinaciones de nombre si la busqueda exacta falla.
@@ -464,7 +466,7 @@ class AthleteService:
         logger.info(f"Se encontraron {len(tiles)} tiles de atletas")
         return tiles
     
-    def click_athlete_settings_button(self, athlete_tile, timeout: int = 5) -> bool:
+    def click_athlete_settings_button(self, athlete_tile, timeout: int = 10) -> bool:
         """
         Hace click en el boton de settings de un tile de atleta especifico.
         Este boton abre el modal de configuracion donde se puede ver el username.
@@ -484,6 +486,15 @@ class AthleteService:
             "arguments[0].scrollIntoView({block: 'center'});", 
             athlete_tile
         )
+        
+        # Simular hover sobre el tile para mostrar el boton si es necesario
+        try:
+            actions = ActionChains(self._driver)
+            actions.move_to_element(athlete_tile).perform()
+            time.sleep(0.2) # Esperar animacion hover
+        except Exception as e:
+            logger.warning(f"No se pudo hacer hover sobre el tile: {e}")
+        
         time.sleep(0.3)
         
         settings_btn = None
@@ -494,7 +505,8 @@ class AthleteService:
                 By.CSS_SELECTOR, 
                 'div[aria-label="Go to this athlete\'s settings"] button'
             )
-            if settings_btn and settings_btn.is_displayed():
+            # Intentar encontrarlo aunque is_displayed sea falso inicialmente
+            if settings_btn:
                 logger.debug("Boton de settings encontrado via div[aria-label] button")
         except NoSuchElementException:
             pass
@@ -508,7 +520,7 @@ class AthleteService:
                 )
                 # Obtener el button padre
                 settings_btn = settings_btn.find_element(By.XPATH, '..')
-                if settings_btn and settings_btn.is_displayed():
+                if settings_btn:
                     logger.debug("Boton de settings encontrado via SettingsIcon")
             except NoSuchElementException:
                 pass
@@ -517,18 +529,36 @@ class AthleteService:
             logger.warning("No se encontro el boton de settings en el tile")
             return False
         
-        try:
-            # Usar JavaScript click para evitar problemas de overlay
-            self._driver.execute_script("arguments[0].click();", settings_btn)
-            logger.info("Click en boton de settings realizado")
-            
-            # Esperar brevemente para que el modal se abra
-            time.sleep(0.5)
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error al hacer click en settings: {e}")
-            return False
+        
+        # Lista de estrategias de interaccion para probar en orden
+        strategies = [
+            ("Keyboard ENTER", lambda btn: (self._driver.execute_script("arguments[0].focus();", btn), btn.send_keys(Keys.ENTER))),
+            ("ActionChains Click", lambda btn: ActionChains(self._driver).move_to_element(btn).pause(0.2).click().perform()),
+            ("JS Click", lambda btn: self._driver.execute_script("arguments[0].click();", btn)),
+            ("JS Dispatch", lambda btn: self._driver.execute_script("arguments[0].dispatchEvent(new MouseEvent('click', {view: window, bubbles: true, cancelable: true}));", btn))
+        ]
+        
+        for name, strategy in strategies:
+            try:
+                # Intentar estrategia
+                strategy(settings_btn)
+                logger.debug(f"Estrategia ejecutada: {name}")
+                
+                # Verificar si el modal se abrio (aumentado a 10s porque puede ser lento)
+                try:
+                    WebDriverWait(self._driver, 10.0).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, ".fieldContain"))
+                    )
+                    logger.info(f"Modal abierto exitosamente con estrategia: {name}")
+                    return True
+                except TimeoutException:
+                    logger.debug(f"Estrategia {name} no abrio el modal en 5s, reintentando...")
+                    
+            except Exception as e:
+                logger.warning(f"Error en estrategia {name}: {e}")
+                
+        logger.error("Todas las estrategias para clickear settings fallaron")
+        return False
     
     def get_athlete_name_from_tile(self, athlete_tile) -> str:
         """
@@ -643,9 +673,11 @@ class AthleteService:
             logger.warning("No se encontro el campo First and Last Name en el modal")
             return ""
     
+    
     def close_settings_modal(self) -> bool:
         """
         Cierra el modal de settings haciendo click en el icono de cerrar.
+        Espera a que el overlay desaparezca para evitar clicks interceptados.
         
         Returns:
             bool: True si se cerro exitosamente, False en caso contrario
@@ -653,7 +685,15 @@ class AthleteService:
         try:
             close_icon = self._driver.find_element(By.CSS_SELECTOR, "i.closeIcon")
             self._driver.execute_script("arguments[0].click();", close_icon)
-            time.sleep(0.3)
+            
+            # Esperar a que el modal y overlay desaparezcan completamente
+            try:
+                self._wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, "div.modalOverlayMask")))
+                self._wait.until(EC.invisibility_of_element_located((By.CSS_SELECTOR, "div.tabbedSettingsModal")))
+            except TimeoutException:
+                logger.warning("Timeout esperando a que desaparezca el overlay del modal")
+                
+            time.sleep(0.5) # Pequeña espera adicional por seguridad
             logger.debug("Modal de settings cerrado")
             return True
         except NoSuchElementException:
@@ -667,7 +707,7 @@ class AthleteService:
     # METODOS PARA NAVEGACION POR GRUPOS
     # =========================================================================
     
-    def _close_dropdown_menu(self, timeout: int = 5) -> None:
+    def _close_dropdown_menu(self, timeout: int = 10) -> None:
         """
         Cierra el menu dropdown de grupos y espera a que el backdrop desaparezca.
         
@@ -1209,3 +1249,69 @@ class AthleteService:
             "tiles_checked": total_tiles_checked
         }
 
+    def discover_username(self, athlete_name: str, full_name: Optional[str] = None, timeout: int = 10) -> Optional[str]:
+        """
+        Busca al atleta por su nombre en TrainingPeaks y extrae su username.
+        Itera por los grupos si es necesario.
+        
+        Args:
+            athlete_name: Nombre corto del atleta
+            full_name: Nombre completo (opcional)
+            timeout: Timeout por operacion
+            
+        Returns:
+            Optional[str]: Username encontrado o None
+        """
+        logger.info(f"Iniciando descubrimiento de username para: {athlete_name}")
+        
+        # 1. Obtener grupos
+        groups = self.get_available_groups(timeout)
+        if not groups:
+            # Si no hay grupos, intentar al menos en la vista actual
+            logger.info("No se detectaron grupos, buscando en vista actual...")
+            return self._discover_in_current_view(athlete_name, full_name, timeout)
+            
+        # 2. Iterar por cada grupo
+        for group in groups:
+            group_name = group["name"]
+            logger.info(f"Buscando en grupo: {group_name}")
+            
+            if self.select_group(group_name, timeout):
+                username = self._discover_in_current_view(athlete_name, full_name, timeout)
+                if username:
+                    logger.info(f"Username '{username}' descubierto en grupo '{group_name}'")
+                    return username
+                    
+        logger.warning(f"No se pudo descubrir username para {athlete_name} tras revisar todos los grupos")
+        return None
+
+    def _discover_in_current_view(self, athlete_name: str, full_name: Optional[str] = None, timeout: int = 10) -> Optional[str]:
+        """Auxiliar para buscar username en la vista (#home) actual."""
+        tiles = self.get_athlete_tiles(timeout)
+        if not tiles:
+            return None
+            
+        # Nombres objetivo normalizados
+        targets = {self._normalize_name(athlete_name)}
+        if full_name:
+            targets.add(self._normalize_name(full_name))
+            
+        for tile in tiles:
+            tile_name = self.get_athlete_name_from_tile(tile)
+            if not tile_name:
+                continue
+                
+            norm_name = self._normalize_name(tile_name)
+            
+            # Coincidencia exacta o parcial
+            is_match = norm_name in targets or any(t in norm_name or norm_name in t for t in targets if len(t) > 3)
+            
+            if is_match:
+                logger.info(f"Coincidencia encontrada: {tile_name}. Abriendo settings...")
+                if self.click_athlete_settings_button(tile, timeout):
+                    if self.wait_for_settings_modal(timeout):
+                        username = self.get_username_from_modal()
+                        self.close_settings_modal()
+                        if username:
+                            return username
+        return None

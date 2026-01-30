@@ -284,14 +284,21 @@ class PostgresSyncRepository:
             ON CONFLICT ("{conflict_pk}")
             DO UPDATE SET
                 {set_sql}
-            WHERE EXCLUDED."{last_modified_col}" >= "{target_schema}"."{target_table}"."{last_modified_col}";
+            WHERE EXCLUDED."{last_modified_col}" >= "{target_schema}"."{target_table}"."{last_modified_col}"
+            RETURNING "{conflict_pk}", (xmax = 0) AS is_insert;
         """
 
         values = [tuple(row[c] for c in columns) for row in rows_list]
+        inserted_ids = []
 
         with conn.cursor() as cur:
-            cur.executemany(sql, values)
-            return cur.rowcount or 0
+            for val in values:
+                cur.execute(sql, val)
+                row = cur.fetchone()
+                if row and row.get("is_insert"):
+                    inserted_ids.append(str(row[conflict_pk]))
+            
+            return inserted_ids
 
     def soft_delete_missing_record_ids(
         self,
