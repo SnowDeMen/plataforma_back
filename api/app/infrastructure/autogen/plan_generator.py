@@ -337,12 +337,68 @@ class PlanGenerator:
         """
         Construye el prompt con el contexto del atleta.
         
+        Usa AthleteContextBuilder si hay metricas computadas disponibles
+        para generar un contexto optimizado (~800 tokens vs ~3000+ legacy).
+        
         Args:
-            athlete_context: Datos del atleta
+            athlete_context: Datos del atleta (puede incluir computed_metrics)
             start_date: Fecha de inicio del plan
             
         Returns:
             Prompt con contexto del atleta
+        """
+        from app.application.services.context_builder import AthleteContextBuilder
+        
+        # Verificar si hay metricas computadas disponibles
+        performance = athlete_context.get('performance') or {}
+        computed_metrics = (
+            athlete_context.get('computed_metrics') or 
+            performance.get('computed_metrics')
+        )
+        
+        # Si hay metricas computadas, usar el builder optimizado
+        if computed_metrics:
+            builder = AthleteContextBuilder()
+            
+            # Extraer workouts recientes del historial
+            recent_workouts = builder.extract_recent_workouts(performance)
+            
+            # Construir contexto optimizado
+            context = builder.build_full_context(
+                athlete_data=athlete_context,
+                computed_metrics=computed_metrics,
+                recent_workouts=recent_workouts,
+                start_date=start_date
+            )
+            
+            # Agregar instrucciones finales
+            prompt = f"""{context}
+
+## INSTRUCCIONES
+
+1. Primero, ANALIZA al atleta considerando las METRICAS DE CARGA (CTL, ATL, TSB)
+2. Si hay ALERTAS ACTIVAS, AJUSTA el plan para mitigar los riesgos indicados
+3. Genera el plan con JUSTIFICACIONES en cada semana y cada workout
+4. Asegurate de que las justificaciones consideren el estado actual de fitness/fatiga
+
+Genera un plan de 4 semanas apropiado para este atleta.
+Incluye las fechas reales para cada workout comenzando desde {start_date.strftime('%Y-%m-%d')}.
+"""
+            return prompt
+        
+        # Fallback al formato legacy si no hay metricas computadas
+        return self._build_athlete_context_prompt_legacy(athlete_context, start_date)
+    
+    def _build_athlete_context_prompt_legacy(
+        self, 
+        athlete_context: Dict[str, Any],
+        start_date: date
+    ) -> str:
+        """
+        Construye el prompt con el contexto del atleta (formato legacy).
+        
+        Se usa cuando no hay metricas computadas disponibles.
+        Mantiene compatibilidad con el flujo anterior.
         """
         # Extraer datos basicos
         name = athlete_context.get('athlete_name', 'Atleta')

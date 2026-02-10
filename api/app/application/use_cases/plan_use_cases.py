@@ -178,6 +178,10 @@ class PlanUseCases:
         Returns:
             TrainingPlanDTO con el plan creado en estado pending
         """
+        # Extraer performance y computed_metrics
+        performance = dto.athlete_info.performance or {}
+        computed_metrics = performance.get('computed_metrics') if isinstance(performance, dict) else None
+        
         # Construir contexto del atleta
         athlete_context = {
             'athlete_id': dto.athlete_id,
@@ -190,8 +194,16 @@ class PlanUseCases:
             'personal': dto.athlete_info.personal,
             'medica': dto.athlete_info.medica,
             'deportiva': dto.athlete_info.deportiva,
-            'performance': dto.athlete_info.performance
+            'performance': performance,
+            'computed_metrics': computed_metrics  # Metricas computadas para contexto LLM
         }
+        
+        # Log si hay metricas computadas disponibles
+        if computed_metrics:
+            logger.info(
+                f"Plan con metricas computadas: CTL={computed_metrics.get('ctl', 'N/A')}, "
+                f"TSB={computed_metrics.get('tsb', 'N/A')}"
+            )
         
         # Crear plan en BD
         plan = await self.repository.create(
