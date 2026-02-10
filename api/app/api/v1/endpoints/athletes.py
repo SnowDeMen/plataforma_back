@@ -30,7 +30,8 @@ router = APIRouter(prefix="/athletes", tags=["Athletes"])
     summary="Listar atletas con filtros opcionales"
 )
 async def list_athletes(
-    status_filter: Optional[str] = Query(None, alias="status", description="Filtrar por status"),
+    training_status: Optional[str] = Query(None, alias="status", description="Filtrar por training_status (Por generar, Por revisar, Plan activo)"),
+    client_status: Optional[str] = Query(None, description="Filtrar por client_status (Airtable: ACTIVO, PRUEBA, etc)"),
     discipline: Optional[str] = Query(None, description="Filtrar por disciplina"),
     limit: int = Query(100, ge=1, le=500, description="Maximo de resultados"),
     offset: int = Query(0, ge=0, description="Desplazamiento para paginacion"),
@@ -39,13 +40,15 @@ async def list_athletes(
     """
     Lista todos los atletas con filtros opcionales.
     
-    - **status**: Filtrar por status (Por generar, Por revisar, Plan activo)
+    - **status**: Filtrar por training_status (Por generar, Por revisar, Plan activo)
+    - **client_status**: Filtrar por status administrativo (Airtable: ACTIVO, PRUEBA, etc)
     - **discipline**: Filtrar por disciplina
     - **limit**: Numero maximo de resultados
     - **offset**: Desplazamiento para paginacion
     """
     return await use_cases.list_athletes(
-        status=status_filter,
+        training_status=training_status,
+        client_status=client_status,
         discipline=discipline,
         limit=limit,
         offset=offset
@@ -55,13 +58,13 @@ async def list_athletes(
 @router.get(
     "/counts",
     response_model=Dict[str, int],
-    summary="Obtener conteo de atletas por status"
+    summary="Obtener conteo de atletas por training_status"
 )
 async def get_status_counts(
     use_cases: AthleteUseCases = Depends(get_athlete_use_cases)
 ) -> Dict[str, int]:
     """
-    Obtiene el conteo de atletas agrupados por status.
+    Obtiene el conteo de atletas agrupados por training_status.
     
     Retorna un diccionario con los conteos:
     - Por generar
@@ -147,7 +150,7 @@ async def update_athlete(
 @router.patch(
     "/{athlete_id}/status",
     response_model=AthleteDTO,
-    summary="Cambiar status de un atleta"
+    summary="Cambiar training_status de un atleta"
 )
 async def update_athlete_status(
     athlete_id: str,

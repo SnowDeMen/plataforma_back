@@ -33,7 +33,8 @@ class AthleteRepository:
 
     async def get_all(
         self,
-        status: Optional[str] = None,
+        training_status: Optional[str] = None,
+        client_status: Optional[str] = None,
         discipline: Optional[str] = None,
         limit: int = 100,
         offset: int = 0
@@ -42,7 +43,8 @@ class AthleteRepository:
         Obtiene una lista de atletas con filtros opcionales.
         
         Args:
-            status: Filtrar por status (Por generar, Por revisar, Plan activo)
+            training_status: Filtrar por training_status (Por generar, Por revisar, Plan activo)
+            client_status: Filtrar por client_status (Airtable: ACTIVO, PRUEBA, etc)
             discipline: Filtrar por disciplina
             limit: Maximo de resultados
             offset: Desplazamiento para paginacion
@@ -52,8 +54,10 @@ class AthleteRepository:
         """
         query = select(AthleteModel)
         
-        if status:
-            query = query.where(AthleteModel.status == status)
+        if training_status:
+            query = query.where(AthleteModel.training_status == training_status)
+        if client_status:
+            query = query.where(AthleteModel.client_status == client_status)
         if discipline:
             query = query.where(AthleteModel.discipline == discipline)
         
@@ -85,9 +89,9 @@ class AthleteRepository:
         Returns:
             AthleteModel creado
         """
-        # Asegurar status por defecto
-        if "status" not in athlete_data:
-            athlete_data["status"] = "Por generar"
+        # Asegurar training_status por defecto
+        if "training_status" not in athlete_data:
+            athlete_data["training_status"] = "Por generar"
             
         athlete = AthleteModel(**athlete_data)
         
@@ -134,7 +138,7 @@ class AthleteRepository:
 
     async def update_status(self, athlete_id: str, new_status: str) -> bool:
         """
-        Actualiza solo el status de un atleta.
+        Actualiza solo el training_status de un atleta.
         
         Args:
             athlete_id: ID del atleta
@@ -147,7 +151,7 @@ class AthleteRepository:
             update(AthleteModel)
             .where(AthleteModel.id == athlete_id)
             .values(
-                status=new_status,
+                training_status=new_status,
                 updated_at=datetime.utcnow()
             )
         )
@@ -155,7 +159,7 @@ class AthleteRepository:
         result = await self.db.execute(query)
         
         if result.rowcount > 0:
-            logger.debug(f"Status del atleta {athlete_id} actualizado a '{new_status}'")
+            logger.debug(f"Training Status del atleta {athlete_id} actualizado a '{new_status}'")
             return True
         
         return False
@@ -179,12 +183,12 @@ class AthleteRepository:
         
         return False
 
-    async def count(self, status: Optional[str] = None) -> int:
+    async def count(self, training_status: Optional[str] = None) -> int:
         """
-        Cuenta el numero de atletas, opcionalmente filtrados por status.
+        Cuenta el numero de atletas, opcionalmente filtrados por training_status.
         
         Args:
-            status: Filtrar por status (opcional)
+            training_status: Filtrar por training_status (opcional)
             
         Returns:
             Numero de atletas
@@ -193,24 +197,24 @@ class AthleteRepository:
         
         query = select(func.count(AthleteModel.id))
         
-        if status:
-            query = query.where(AthleteModel.status == status)
+        if training_status:
+            query = query.where(AthleteModel.training_status == training_status)
         
         result = await self.db.execute(query)
         return result.scalar() or 0
 
     async def get_status_counts(self) -> Dict[str, int]:
         """
-        Obtiene el conteo de atletas por cada status.
+        Obtiene el conteo de atletas por cada training_status.
         
         Returns:
-            Diccionario con conteos por status
+            Diccionario con conteos por training_status
         """
         from sqlalchemy import func
         
         query = (
-            select(AthleteModel.status, func.count(AthleteModel.id))
-            .group_by(AthleteModel.status)
+            select(AthleteModel.training_status, func.count(AthleteModel.id))
+            .group_by(AthleteModel.training_status)
         )
         
         result = await self.db.execute(query)

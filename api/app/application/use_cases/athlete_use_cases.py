@@ -58,7 +58,8 @@ class AthleteUseCases:
 
     async def list_athletes(
         self,
-        status: Optional[str] = None,
+        training_status: Optional[str] = None,
+        client_status: Optional[str] = None,
         discipline: Optional[str] = None,
         limit: int = 100,
         offset: int = 0
@@ -76,7 +77,8 @@ class AthleteUseCases:
             Lista de AthleteListItemDTO
         """
         athletes = await self.repository.get_all(
-            status=status,
+            training_status=training_status,
+            client_status=client_status,
             discipline=discipline,
             limit=limit,
             offset=offset
@@ -90,7 +92,9 @@ class AthleteUseCases:
                 age=a.age,
                 discipline=a.discipline,
                 level=a.level,
-                status=a.status,
+                status=a.training_status, # Legacy support in DTO if needed
+                training_status=a.training_status,
+                client_status=a.client_status,
                 goal=a.goal
             )
             for a in athletes
@@ -175,7 +179,8 @@ class AthleteUseCases:
             discipline=discipline,
             level=athlete.level,
             goal=goal,
-            status=athlete.status,
+            training_status=athlete.training_status,
+            client_status=athlete.client_status,
             experience=athlete.experience,
             tp_username=athlete.tp_username,
             tp_name=athlete.tp_name,
@@ -264,7 +269,7 @@ class AthleteUseCases:
 
     async def update_status(self, athlete_id: str, dto: AthleteStatusUpdateDTO) -> AthleteDTO:
         """
-        Actualiza solo el status de un atleta.
+        Actualiza solo el training_status de un atleta.
         
         Args:
             athlete_id: ID del atleta
@@ -276,14 +281,14 @@ class AthleteUseCases:
         Raises:
             AthleteNotFoundException: Si el atleta no existe
         """
-        success = await self.repository.update_status(athlete_id, dto.status)
+        success = await self.repository.update_status(athlete_id, dto.training_status)
         
         if not success:
             raise AthleteNotFoundException(athlete_id)
         
         await self.db.commit()
         
-        logger.info(f"Status del atleta {athlete_id} cambiado a '{dto.status}'")
+        logger.info(f"Training Status del atleta {athlete_id} cambiado a '{dto.training_status}'")
         
         return await self.get_athlete(athlete_id)
 

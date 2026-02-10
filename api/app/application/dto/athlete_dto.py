@@ -145,7 +145,8 @@ class AthleteDTO(BaseModel):
     discipline: Optional[str] = None
     level: Optional[str] = None
     goal: Optional[str] = None
-    status: str = "Por generar"
+    training_status: str = "Por generar"
+    client_status: Optional[str] = None
     experience: Optional[str] = None
     tp_username: Optional[str] = None  # Cuenta TrainingPeaks (desde Airtable)
     tp_name: Optional[str] = None      # Nombre validado en TrainingPeaks
@@ -166,7 +167,8 @@ class AthleteListItemDTO(BaseModel):
     age: Optional[int] = None
     discipline: Optional[str] = None
     level: Optional[str] = None
-    status: str
+    training_status: str
+    client_status: Optional[str] = None
     goal: Optional[str] = None
     
     class Config:
@@ -180,7 +182,8 @@ class AthleteUpdateDTO(BaseModel):
     discipline: Optional[str] = None
     level: Optional[str] = None
     goal: Optional[str] = None
-    status: Optional[str] = None
+    training_status: Optional[str] = None
+    client_status: Optional[str] = None
     experience: Optional[str] = None
     personal: Optional[Dict[str, Any]] = None
     medica: Optional[Dict[str, Any]] = None
@@ -193,9 +196,9 @@ class AthleteUpdateDTO(BaseModel):
 
 class AthleteStatusUpdateDTO(BaseModel):
     """DTO para cambiar solo el status de un atleta."""
-    status: str = Field(
+    training_status: str = Field(
         ..., 
-        description="Nuevo status del atleta",
+        description="Nuevo status del entrenamiento",
         pattern="^(Por generar|Por revisar|Plan activo)$"
     )
     
@@ -211,12 +214,5 @@ class AthleteCreateDTO(BaseModel):
     discipline: Optional[str] = None
     level: Optional[str] = None
     goal: Optional[str] = None
-    status: str = Field(default="Por generar", description="Status inicial")
-    experience: Optional[str] = None
-    personal: Optional[Dict[str, Any]] = None
-    medica: Optional[Dict[str, Any]] = None
-    deportiva: Optional[Dict[str, Any]] = None
-    performance: Optional[Dict[str, Any]] = None
-    
     class Config:
         from_attributes = True
