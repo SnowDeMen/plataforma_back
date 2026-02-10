@@ -21,21 +21,17 @@ from .types import FieldMapping
 
 
 def _parse_iso_date(value: Any) -> date | None:
+    # ... (existing code) ...
+    return None
+
+def normalize_status(value: Any) -> str:
     """
-    Parsea una fecha ISO 8601 (YYYY-MM-DD) a objeto date.
-    
-    Args:
-        value: Valor del campo de Airtable (string ISO 8601 o None)
-        
-    Returns:
-        date si el parsing es exitoso, None si el valor es vacio o invalido
+    Normaliza el estatus que viene de Airtable (administrative).
     """
     if not value:
-        return None
-    try:
-        return date.fromisoformat(str(value))
-    except (ValueError, TypeError):
-        return None
+        return "PRUEBA" # O un valor por defecto para Airtable
+    
+    return str(value).strip()
 
 
 def get_table_sync_config(
@@ -65,7 +61,7 @@ def get_table_sync_config(
             target_table="athletes",
             field_mappings=[
                 FieldMapping(airtable_field="Name", pg_column="name", required=True),
-                FieldMapping(airtable_field="Status", pg_column="status"),
+                FieldMapping(airtable_field="Status", pg_column="client_status", transform=normalize_status),
                 FieldMapping(airtable_field="Discipline", pg_column="discipline"),
                 FieldMapping(airtable_field="Level", pg_column="level"),
                 FieldMapping(airtable_field="Goal", pg_column="goal"),
@@ -217,7 +213,7 @@ def get_table_sync_config(
                     pg_column="training_start_date",
                     transform=_parse_iso_date
                 ),
-                FieldMapping(airtable_field="Estatus", pg_column="status"),
+                FieldMapping(airtable_field="Estatus", pg_column="client_status", transform=normalize_status),
                 # TrainingPeaks Integration
                 FieldMapping(airtable_field="Cuenta TrainingPeaks", pg_column="tp_username"),
                 FieldMapping(airtable_field="tp_name", pg_column="tp_name"),
