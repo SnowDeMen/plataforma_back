@@ -17,8 +17,11 @@ from app.infrastructure.external.airtable_sync.table_mappings import get_table_s
 from app.infrastructure.database.session import init_db, close_db, AsyncSessionLocal
 from app.infrastructure.database.models import AthleteModel
 from app.application.use_cases.sync_use_cases import AthleteAutomationUseCase
+from app.application.use_cases.notification_use_cases import NotificationUseCases
+from app.application.use_cases.admin_use_cases import AdminUseCases
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from app.infrastructure.repositories.system_settings_repository import SystemSettingsRepository
 from sqlalchemy import select, or_
 from datetime import timedelta, datetime
 
@@ -58,8 +61,8 @@ def startup_handler(app: FastAPI) -> Callable:
                 level=settings.LOG_LEVEL
             )
             
-            # Inicializar y programar sync de Airtable
-            await _setup_airtable_sync(app)
+            # Inicializar y programar tareas (Sync Airtable, Notificaciones, etc)
+            await _setup_scheduler(app)
             
             logger.success("Aplicacion iniciada correctamente")
             
@@ -108,37 +111,68 @@ def _print_available_urls() -> None:
     logger.opt(colors=True).info("<bold><green>" + "=" * 80 + "</green></bold>")
 
 
-async def _setup_airtable_sync(app: FastAPI) -> None:
-    """Configura y arranca el programador de sync de Airtable."""
-    if not all([settings.AIRTABLE_TOKEN, settings.AIRTABLE_BASE_ID, settings.AIRTABLE_TABLE_NAME]):
-        logger.warning("Configuracion de Airtable incompleta - el sync automatico no se iniciara")
-        return
-
+async def _setup_scheduler(app: FastAPI) -> None:
+    """Configura y arranca el programador de tareas."""
     scheduler = AsyncIOScheduler()
     
-    # Programar la tarea periódica
-    scheduler.add_job(
-        _run_sync_task,
-        trigger=IntervalTrigger(hours=settings.AIRTABLE_SYNC_INTERVAL_HOURS),
-        id="airtable_sync",
-        replace_existing=True
-    )
-    
-    # Para ejecutar una vez al inicio
-    scheduler.add_job(_run_sync_task, id="airtable_sync_initial")
-    scheduler.add_job(_run_periodic_training_generation_task, id="periodic_training_generation_initial")
-    
-    # Job para generación periódica de entrenamientos
+    async with AsyncSessionLocal() as db:
+        # 1. Poblar configuraciones por defecto
+        admin_use_cases = AdminUseCases(db)
+        await admin_use_cases.seed_default_settings()
+        
+        # 2. Obtener intervalo de notificaciones de Telegram (desde DB o config)
+        settings_repo = SystemSettingsRepository(db)
+        tg_interval = await settings_repo.get_value("telegram_notification_interval_hours", 24.0)
+
+    # Job: Sync Airtable
+    if all([settings.AIRTABLE_TOKEN, settings.AIRTABLE_BASE_ID, settings.AIRTABLE_TABLE_NAME]):
+        scheduler.add_job(
+            _run_sync_task,
+            trigger=IntervalTrigger(hours=settings.AIRTABLE_SYNC_INTERVAL_HOURS),
+            id="airtable_sync",
+            replace_existing=True
+        )
+        if settings.RUN_STARTUP_TASKS:
+            scheduler.add_job(_run_sync_task, id="airtable_sync_initial")
+    else:
+        logger.warning("Configuracion de Airtable incompleta - el sync automatico no se iniciara")
+
+    # Job: Entrenamiento Periódico
+    if settings.RUN_STARTUP_TASKS:
+        scheduler.add_job(_run_periodic_training_generation_task, id="periodic_training_generation_initial")
+        
     scheduler.add_job(
         _run_periodic_training_generation_task,
         trigger=IntervalTrigger(hours=settings.ATHLETE_TRAINING_GEN_INTERVAL_HOURS),
         id="periodic_training_generation",
         replace_existing=True
     )
+    
+    # Job: Notificaciones Telegram (Atletas Pendientes)
+    scheduler.add_job(
+        _run_telegram_notification_task,
+        trigger=IntervalTrigger(hours=tg_interval),
+        id="telegram_notification",
+        replace_existing=True
+    )
+    # Ejecutar una vez al inicio también si está habilitado
+    if settings.RUN_STARTUP_TASKS:
+        scheduler.add_job(_run_telegram_notification_task, id="telegram_notification_initial")
         
     scheduler.start()
     app.state.scheduler = scheduler
-    logger.info(f"Programador de tareas iniciado (Sync Airtable & Generación Entrenamientos)")
+    logger.info(f"Programador de tareas iniciado (Sync, Entrenamientos, Telegram)")
+
+
+async def _run_telegram_notification_task() -> None:
+    """Ejecuta la notificación de Telegram para atletas pendientes."""
+    try:
+        logger.info("Ejecutando tarea de notificación de Telegram...")
+        async with AsyncSessionLocal() as db:
+            notification = NotificationUseCases(db)
+            await notification.notify_pending_review_athletes()
+    except Exception as e:
+        logger.error(f"Error en tarea de notificación de Telegram: {e}")
 
 
 async def _run_sync_task() -> None:
