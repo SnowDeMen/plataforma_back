@@ -16,6 +16,12 @@ from .training_history_dto import (
     TrainingHistorySyncResponseDTO,
     TrainingHistoryJobStatusDTO,
 )
+from .metrics_dto import (
+    AlertDTO,
+    ComputedMetricsDTO,
+    MetricsRecomputeResponseDTO,
+    AlertsListResponseDTO,
+)
 
 __all__ = [
     "AgentCreateDTO",
@@ -32,5 +38,9 @@ __all__ = [
     "TrainingHistorySyncRequestDTO",
     "TrainingHistorySyncResponseDTO",
     "TrainingHistoryJobStatusDTO",
+    "AlertDTO",
+    "ComputedMetricsDTO",
+    "MetricsRecomputeResponseDTO",
+    "AlertsListResponseDTO",
 ]
 

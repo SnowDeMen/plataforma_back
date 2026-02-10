@@ -199,7 +199,9 @@ class TrainingHistoryUseCases:
                 athlete = await repo.get_by_id(athlete_id)
                 if athlete is None:
                     raise RuntimeError(f"Atleta no encontrado en DB: {athlete_id}")
-                athlete_name = athlete.name
+                # Preferir tp_name (nombre validado de TP) sobre name (de AirTable)
+                # para evitar problemas con nombres abreviados o discrepancias.
+                athlete_name = athlete.tp_name or athlete.name
 
             await self._update_job(job_id, message="Creando driver dedicado y autenticando...", progress=1)
 
@@ -340,6 +342,62 @@ class TrainingHistoryUseCases:
                     current_perf = {}
 
                 current_perf["training_history"] = payload
+                
+                # Normalizar datos de TrainingPeaks a formato plano
+                await self._update_job(job_id, message="Normalizando datos...", progress=97)
+                try:
+                    from app.application.services.tp_data_normalizer import TPDataNormalizer
+                    
+                    normalizer = TPDataNormalizer()
+                    normalized_days, validation_summary = normalizer.normalize_history(
+                        payload.get("days", {})
+                    )
+                    
+                    logger.info(
+                        f"Historial normalizado para {athlete_id}: "
+                        f"{validation_summary.total_workouts} workouts, "
+                        f"{validation_summary.valid_workouts} validos, "
+                        f"calidad: {validation_summary.avg_quality_score:.0%}, "
+                        f"status: {validation_summary.workouts_by_status}"
+                    )
+                    
+                    # Guardar datos normalizados junto con raw
+                    current_perf["training_history"]["normalized_days"] = normalized_days
+                    current_perf["training_history"]["validation_summary"] = {
+                        "total_workouts": validation_summary.total_workouts,
+                        "valid_workouts": validation_summary.valid_workouts,
+                        "avg_quality_score": validation_summary.avg_quality_score,
+                        "workouts_by_status": validation_summary.workouts_by_status
+                    }
+                    
+                except Exception as e:
+                    logger.warning(f"Error normalizando datos para {athlete_id}: {e}")
+                    normalized_days = payload.get("days", {})
+                
+                # Computar metricas con datos normalizados
+                await self._update_job(job_id, message="Computando metricas...", progress=98)
+                try:
+                    from app.application.services.history_processor import HistoryProcessor
+                    
+                    processor = HistoryProcessor()
+                    metrics = processor.process(normalized_days)
+                    current_perf["computed_metrics"] = metrics.to_dict()
+                    
+                    # Guardar alertas activas
+                    current_perf["active_alerts"] = [
+                        alert.to_dict() for alert in metrics.active_alerts
+                    ]
+                    
+                    alerts_count = len(metrics.active_alerts)
+                    logger.info(
+                        f"Metricas computadas para atleta {athlete_id}: "
+                        f"CTL={metrics.ctl:.1f}, ATL={metrics.atl:.1f}, "
+                        f"TSB={metrics.tsb:.1f}, alertas={alerts_count}"
+                    )
+                except Exception as e:
+                    logger.warning(f"Error computando metricas para {athlete_id}: {e}")
+                    # No fallar el job si falla el computo de metricas
+                
                 await repo.update(athlete_id, {"performance": current_perf})
                 await db.commit()
 
@@ -347,7 +405,7 @@ class TrainingHistoryUseCases:
                 job_id,
                 status="completed",
                 progress=100,
-                message="Historial sincronizado y guardado correctamente.",
+                message="Historial sincronizado y metricas computadas correctamente.",
                 completed_at=datetime.now(timezone.utc),
             )
 

@@ -170,7 +170,9 @@ class TPSyncUseCases:
                 repo = AthleteRepository(db)
                 athlete = await repo.get_by_id(athlete_id)
                 if athlete:
-                    expected_name = athlete.name
+                    # Preferir tp_name (nombre validado de TP en sync anterior) sobre
+                    # name (de AirTable) para evitar fallos con nombres abreviados.
+                    expected_name = athlete.tp_name or athlete.name
                     logger.info(f"[tp-sync-job:{job_id}] Nombre para busqueda optimizada: {expected_name}")
             
             # 1. Crear driver navegando a #home
