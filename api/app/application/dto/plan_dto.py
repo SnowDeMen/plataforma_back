@@ -35,6 +35,10 @@ class AthleteInfoDTO(BaseModel):
         default_factory=dict,
         description="Historial de entrenamientos recientes"
     )
+    computed_metrics: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Metricas preprocesadas: CTL, ATL, TSB, adherencia, distribucion"
+    )
 
     class Config:
         from_attributes = True

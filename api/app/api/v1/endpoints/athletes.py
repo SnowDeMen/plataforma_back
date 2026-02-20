@@ -2,10 +2,13 @@
 Endpoints REST para gestion de atletas.
 
 Proporciona operaciones CRUD para atletas,
-incluyendo listado, consulta, actualizacion y cambio de status.
+incluyendo listado, consulta, actualizacion, cambio de status,
+metricas computadas y alertas.
 """
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from loguru import logger
 
 from app.application.use_cases.athlete_use_cases import AthleteUseCases, AthleteNotFoundException
 from app.application.dto.athlete_dto import (
@@ -14,6 +17,12 @@ from app.application.dto.athlete_dto import (
     AthleteUpdateDTO,
     AthleteStatusUpdateDTO,
     AthleteCreateDTO
+)
+from app.application.dto.metrics_dto import (
+    ComputedMetricsDTO,
+    AlertDTO,
+    AlertsListResponseDTO,
+    MetricsRecomputeResponseDTO
 )
 from app.api.v1.dependencies.use_case_deps import get_athlete_use_cases
 from app.infrastructure.database.session import get_db
@@ -224,3 +233,204 @@ async def seed_athletes(
     TrainingPeaks o archivos CSV.
     """
     return await use_cases.seed_athletes(athletes_data)
+
+
+# =============================================================================
+# ENDPOINTS DE METRICAS Y ALERTAS
+# =============================================================================
+
+
+@router.get(
+    "/{athlete_id}/metrics",
+    response_model=ComputedMetricsDTO,
+    summary="Obtener metricas computadas del atleta"
+)
+async def get_athlete_metrics(
+    athlete_id: str,
+    db: AsyncSession = Depends(get_db)
+) -> ComputedMetricsDTO:
+    """
+    Obtiene las metricas computadas del historial de entrenamiento.
+    
+    Incluye:
+    - Carga de entrenamiento (CTL, ATL, TSB, Ramp Rate)
+    - Adherencia y consistencia
+    - Distribucion de intensidad
+    - Tendencias y patrones
+    - Alertas activas
+    
+    Las metricas se computan automaticamente al sincronizar el historial.
+    """
+    repo = AthleteRepository(db)
+    athlete = await repo.get_by_id(athlete_id)
+    
+    if not athlete:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Atleta no encontrado"
+        )
+    
+    performance = athlete.performance if isinstance(athlete.performance, dict) else {}
+    computed_metrics = performance.get("computed_metrics")
+    
+    if not computed_metrics:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Metricas no disponibles. Sincroniza el historial de entrenamientos primero."
+        )
+    
+    # Agregar alertas activas al response
+    active_alerts = performance.get("active_alerts", [])
+    alerts_dto = [
+        AlertDTO(**alert) for alert in active_alerts
+    ]
+    
+    # Construir response
+    metrics_response = ComputedMetricsDTO(**computed_metrics)
+    metrics_response.active_alerts = alerts_dto
+    
+    return metrics_response
+
+
+@router.get(
+    "/{athlete_id}/alerts",
+    response_model=AlertsListResponseDTO,
+    summary="Obtener alertas activas del atleta"
+)
+async def get_athlete_alerts(
+    athlete_id: str,
+    category: Optional[str] = Query(
+        None, 
+        description="Filtrar por categoria: load, recovery, adherence, performance, health"
+    ),
+    severity: Optional[str] = Query(
+        None, 
+        description="Filtrar por severidad: info, warning, critical"
+    ),
+    db: AsyncSession = Depends(get_db)
+) -> AlertsListResponseDTO:
+    """
+    Obtiene las alertas activas del atleta.
+    
+    Las alertas se generan automaticamente basadas en las metricas
+    computadas del historial de entrenamiento.
+    
+    Categorias:
+    - load: Carga de entrenamiento (ramp rate alto, etc)
+    - recovery: Recuperacion (TSB muy negativo)
+    - adherence: Adherencia al plan (baja adherencia)
+    - performance: Rendimiento (distribucion no polarizada)
+    - health: Salud (futuro: HRV, sueno)
+    
+    Severidades:
+    - info: Informativo
+    - warning: Requiere atencion
+    - critical: Accion inmediata requerida
+    """
+    repo = AthleteRepository(db)
+    athlete = await repo.get_by_id(athlete_id)
+    
+    if not athlete:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Atleta no encontrado"
+        )
+    
+    performance = athlete.performance if isinstance(athlete.performance, dict) else {}
+    active_alerts = performance.get("active_alerts", [])
+    
+    # Aplicar filtros
+    filtered_alerts = active_alerts
+    filters_applied = {}
+    
+    if category:
+        filtered_alerts = [
+            a for a in filtered_alerts 
+            if a.get("category") == category
+        ]
+        filters_applied["category"] = category
+    
+    if severity:
+        filtered_alerts = [
+            a for a in filtered_alerts 
+            if a.get("severity") == severity
+        ]
+        filters_applied["severity"] = severity
+    
+    # Convertir a DTOs
+    alerts_dto = [AlertDTO(**alert) for alert in filtered_alerts]
+    
+    return AlertsListResponseDTO(
+        athlete_id=athlete_id,
+        total_alerts=len(alerts_dto),
+        alerts=alerts_dto,
+        filters_applied=filters_applied
+    )
+
+
+@router.post(
+    "/{athlete_id}/metrics/recompute",
+    response_model=MetricsRecomputeResponseDTO,
+    summary="Recomputar metricas del atleta"
+)
+async def recompute_athlete_metrics(
+    athlete_id: str,
+    period_days: int = Query(90, ge=7, le=365, description="Dias de historial a analizar"),
+    db: AsyncSession = Depends(get_db)
+) -> MetricsRecomputeResponseDTO:
+    """
+    Fuerza el recalculo de metricas y alertas.
+    
+    Util cuando:
+    - Se quiere analizar un periodo diferente
+    - Se agregaron nuevas reglas de alerta
+    - Se corrigieron datos del historial manualmente
+    
+    El recalculo usa el historial ya sincronizado en la DB,
+    NO requiere re-sincronizar desde TrainingPeaks.
+    """
+    repo = AthleteRepository(db)
+    athlete = await repo.get_by_id(athlete_id)
+    
+    if not athlete:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail="Atleta no encontrado"
+        )
+    
+    performance = athlete.performance if isinstance(athlete.performance, dict) else {}
+    training_history = performance.get("training_history", {})
+    days = training_history.get("days", {})
+    
+    if not days:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No hay historial de entrenamientos sincronizado. Sincroniza primero."
+        )
+    
+    # Computar metricas
+    from app.application.services.history_processor import HistoryProcessor
+    
+    processor = HistoryProcessor()
+    metrics = processor.process(days, period_days=period_days)
+    
+    # Actualizar en DB
+    performance["computed_metrics"] = metrics.to_dict()
+    performance["active_alerts"] = [alert.to_dict() for alert in metrics.active_alerts]
+    
+    await repo.update(athlete_id, {"performance": performance})
+    await db.commit()
+    
+    logger.info(
+        f"Metricas recomputadas para atleta {athlete_id}: "
+        f"CTL={metrics.ctl:.1f}, TSB={metrics.tsb:.1f}, "
+        f"alertas={len(metrics.active_alerts)}"
+    )
+    
+    return MetricsRecomputeResponseDTO(
+        success=True,
+        message=f"Metricas recomputadas exitosamente para {period_days} dias",
+        athlete_id=athlete_id,
+        computed_at=datetime.utcnow(),
+        alerts_count=len(metrics.active_alerts)
+    )

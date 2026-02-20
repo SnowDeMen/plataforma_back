@@ -53,6 +53,11 @@ def startup_handler(app: FastAPI) -> Callable:
             AuditLogger.initialize()
             logger.info("Sistema de auditoria inicializado")
             
+            # Registrar alertas de entrenamiento por defecto
+            from app.application.services.alert_evaluators import register_default_alerts
+            register_default_alerts()
+            logger.info("Sistema de alertas de entrenamiento inicializado")
+            
             # Configurar logging adicional
             logger.add(
                 settings.LOG_FILE,

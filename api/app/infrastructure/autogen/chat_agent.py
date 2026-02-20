@@ -629,8 +629,12 @@ Nombre: {athlete_name}
             success=True
         )
         
-        # Ejecutar la herramienta en un hilo separado para no bloquear el event loop
-        result = await asyncio.to_thread(
+        # Ejecutar la herramienta usando el executor dedicado de Selenium.
+        # run_selenium() usa ThreadPoolExecutor dedicado y semaforo global
+        # para limitar operaciones de Selenium concurrentes.
+        from app.infrastructure.driver.selenium_executor import run_selenium
+        
+        result = await run_selenium(
             MCPToolsAdapter.execute_tool,
             tool_name=function_name,
             arguments=arguments,
