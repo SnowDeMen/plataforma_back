@@ -940,19 +940,25 @@ class AthleteService:
         
         return normalized
     
+    # Longitud minima para considerar un prefijo como match valido.
+    # Evita falsos positivos con prefijos muy cortos (ej. "Al" matcheando "Alberto").
+    _MIN_PREFIX_LENGTH = 3
+    
     def _names_match(self, name1: str, name2: str) -> bool:
         """
-        Compara si el primer nombre de ambos strings coincide.
+        Compara si el primer nombre de ambos strings coincide o es abreviacion.
         
-        Solo compara el primer nombre (primera palabra) de cada string,
-        lo que permite busquedas rapidas sin ambiguedad por apellidos.
+        Compara el primer nombre (primera palabra) de cada string.
+        Soporta nombres abreviados usando startswith bidireccional:
+        si un nombre es prefijo del otro (con minimo _MIN_PREFIX_LENGTH caracteres),
+        se considera match. Ej: "Lore" matchea "Lorena", "Ale" matchea "Alejandro".
         
         Args:
             name1: Primer nombre completo
             name2: Segundo nombre completo
             
         Returns:
-            bool: True si el primer nombre coincide, False en caso contrario
+            bool: True si el primer nombre coincide o es prefijo valido
         """
         n1 = self._normalize_name(name1)
         n2 = self._normalize_name(name2)
@@ -967,7 +973,21 @@ class AthleteService:
         first1 = words1[0] if words1 else ""
         first2 = words2[0] if words2 else ""
         
-        return first1 == first2
+        if not first1 or not first2:
+            return False
+        
+        # Igualdad exacta
+        if first1 == first2:
+            return True
+        
+        # Prefijo bidireccional: "lore" -> "lorena" o "lorena" -> "lore"
+        # Ambos deben tener al menos _MIN_PREFIX_LENGTH caracteres
+        prefix_len = min(len(first1), len(first2))
+        if prefix_len >= self._MIN_PREFIX_LENGTH:
+            if first1.startswith(first2) or first2.startswith(first1):
+                return True
+        
+        return False
     
     def _filter_tiles_by_name(
         self, 
@@ -997,31 +1017,31 @@ class AthleteService:
         return candidates
     
     # =========================================================================
-    # METODO PRINCIPAL DE BUSQUEDA POR USERNAME
+    # METODOS DE BUSQUEDA POR USERNAME
     # =========================================================================
     
-    def _search_in_current_group(
-        self, 
-        username: str, 
-        group_name: str, 
-        expected_name: str = None,
+    def _search_by_name_in_group(
+        self,
+        username: str,
+        group_name: str,
+        expected_name: str,
         timeout: int = 10
     ) -> dict:
         """
-        Busca un username en los atletas del grupo actualmente seleccionado.
+        Busca un username filtrando tiles por primer nombre (busqueda rapida).
         
-        OPTIMIZACION: Si se proporciona expected_name, primero filtra tiles por
-        nombre visible (sin abrir modales). Solo abre modales de los candidatos.
-        Esto reduce el tiempo de O(n) a O(1) en el caso promedio.
+        Filtra tiles cuyo nombre visible coincide con el primer nombre de
+        expected_name (ej. "Emiliano" de "Emiliano Perez Sanchez"), y solo
+        abre modales de esos candidatos para verificar el username.
         
         Args:
             username: Username a buscar (case-insensitive)
             group_name: Nombre del grupo actual (para logging y resultado)
-            expected_name: Nombre esperado del atleta (opcional, para busqueda rapida)
+            expected_name: Nombre completo esperado (se usa el primer nombre)
             timeout: Segundos de espera por operacion
             
         Returns:
-            dict: Resultado parcial de la busqueda con tiles_checked actualizado
+            dict: Resultado parcial con found/full_name/tiles_checked
         """
         result = {
             "found": False,
@@ -1031,120 +1051,169 @@ class AthleteService:
             "tiles_checked": 0
         }
         
-        # Obtener tiles de atletas en el grupo actual
         tiles = self.get_athlete_tiles(timeout)
         
         if not tiles:
             logger.info(f"No hay atletas en el grupo {group_name}")
             return result
         
-        logger.info(f"Buscando en grupo '{group_name}' con {len(tiles)} atletas")
+        candidates = self._filter_tiles_by_name(tiles, expected_name, timeout)
         
-        # OPTIMIZACION: Si tenemos expected_name, filtrar primero por nombre visible
-        if expected_name:
-            candidates = self._filter_tiles_by_name(tiles, expected_name, timeout)
+        if not candidates:
+            logger.info(
+                f"No hay atletas con primer nombre similar a '{expected_name}' "
+                f"en grupo '{group_name}'"
+            )
+            return result
+        
+        logger.info(
+            f"Busqueda por nombre: {len(candidates)} candidatos de {len(tiles)} atletas "
+            f"coinciden con '{expected_name}' en grupo '{group_name}'"
+        )
+        
+        for tile, tile_name in candidates:
+            logger.debug(f"Verificando candidato: {tile_name}")
             
-            if candidates:
-                logger.info(
-                    f"Busqueda optimizada: {len(candidates)} candidatos de {len(tiles)} atletas "
-                    f"coinciden con '{expected_name}'"
-                )
-                
-                # Solo verificar los candidatos (abre modal solo de estos)
-                for tile, tile_name in candidates:
-                    logger.debug(f"Verificando candidato: {tile_name}")
-                    
-                    # Click en settings
-                    if not self.click_athlete_settings_button(tile, timeout):
-                        logger.warning(f"No se pudo abrir settings para {tile_name}")
-                        continue
-                    
-                    # Esperar modal
-                    if not self.wait_for_settings_modal(timeout):
-                        logger.warning(f"Modal no se abrio para {tile_name}")
-                        continue
-                    
-                    result["tiles_checked"] += 1
-                    
-                    # Extraer username del modal
-                    modal_username = self.get_username_from_modal()
-                    
-                    # Comparar usernames (case-insensitive)
-                    if modal_username.lower() == username.lower():
-                        # Match encontrado
-                        full_name = self.get_full_name_from_modal()
-                        
-                        result["found"] = True
-                        result["full_name"] = full_name
-                        
-                        print(f"El nombre del usuario {username} es {full_name}")
-                        logger.info(
-                            f"Match encontrado (optimizado): usuario '{username}' = "
-                            f"'{full_name}' en grupo '{group_name}'"
-                        )
-                        
-                        self.close_settings_modal()
-                        return result
-                    
-                    # No hay match, cerrar modal
-                    self.close_settings_modal()
-                    time.sleep(0.2)
-                
-                # Candidatos verificados pero ninguno coincidio
-                logger.info(
-                    f"Candidatos por nombre no coincidieron con username. "
-                    f"Verificados: {result['tiles_checked']}"
-                )
-                return result
-            else:
-                # No hay candidatos por nombre, el atleta no esta en este grupo
-                logger.info(
-                    f"No hay atletas con nombre similar a '{expected_name}' en grupo {group_name}"
-                )
-                return result
-        
-        # FALLBACK: Sin expected_name, iterar todos los atletas (comportamiento original)
-        logger.info("Busqueda sin expected_name: verificando todos los atletas...")
-        
-        for i, tile in enumerate(tiles):
-            tile_name = self.get_athlete_name_from_tile(tile)
-            logger.debug(f"Verificando atleta {i+1}/{len(tiles)}: {tile_name}")
-            
-            # Click en settings
             if not self.click_athlete_settings_button(tile, timeout):
                 logger.warning(f"No se pudo abrir settings para {tile_name}")
                 continue
             
-            # Esperar modal
             if not self.wait_for_settings_modal(timeout):
                 logger.warning(f"Modal no se abrio para {tile_name}")
                 continue
             
             result["tiles_checked"] += 1
-            
-            # Extraer username del modal
             modal_username = self.get_username_from_modal()
             
-            # Comparar usernames (case-insensitive)
             if modal_username.lower() == username.lower():
-                # Match encontrado
                 full_name = self.get_full_name_from_modal()
-                
                 result["found"] = True
                 result["full_name"] = full_name
                 
                 print(f"El nombre del usuario {username} es {full_name}")
-                logger.info(f"Match encontrado: usuario '{username}' = '{full_name}' en grupo '{group_name}'")
+                logger.info(
+                    f"Match encontrado (por nombre): usuario '{username}' = "
+                    f"'{full_name}' en grupo '{group_name}'"
+                )
                 
                 self.close_settings_modal()
                 return result
             
-            # No hay match, cerrar modal y continuar
             self.close_settings_modal()
             time.sleep(0.2)
         
-        logger.info(f"No se encontro match en grupo {group_name}")
+        logger.info(
+            f"Candidatos por nombre verificados sin match de username en '{group_name}'. "
+            f"Verificados: {result['tiles_checked']}"
+        )
         return result
+    
+    def _search_by_username_in_group(
+        self,
+        username: str,
+        group_name: str,
+        result: dict,
+        timeout: int = 10
+    ) -> dict:
+        """
+        Itera todos los tiles del grupo abriendo cada modal para verificar username.
+        
+        Es el metodo de fuerza bruta: abre el modal de CADA atleta para comparar
+        el username. Re-obtiene los tiles del DOM para evitar stale elements.
+        
+        Args:
+            username: Username a buscar (case-insensitive)
+            group_name: Nombre del grupo (para logging)
+            result: Diccionario de resultado parcial (acumula tiles_checked)
+            timeout: Segundos de espera por operacion
+            
+        Returns:
+            dict: Resultado actualizado con found/full_name si hay match
+        """
+        tiles = self.get_athlete_tiles(timeout)
+        
+        if not tiles:
+            logger.info(f"No hay atletas en el grupo {group_name} (iteracion completa)")
+            return result
+        
+        logger.info(f"Iteracion completa: verificando {len(tiles)} atletas en '{group_name}'...")
+        
+        for i, tile in enumerate(tiles):
+            tile_name = self.get_athlete_name_from_tile(tile)
+            logger.debug(f"Verificando atleta {i+1}/{len(tiles)}: {tile_name}")
+            
+            if not self.click_athlete_settings_button(tile, timeout):
+                logger.warning(f"No se pudo abrir settings para {tile_name}")
+                continue
+            
+            if not self.wait_for_settings_modal(timeout):
+                logger.warning(f"Modal no se abrio para {tile_name}")
+                continue
+            
+            result["tiles_checked"] += 1
+            modal_username = self.get_username_from_modal()
+            
+            if modal_username.lower() == username.lower():
+                full_name = self.get_full_name_from_modal()
+                result["found"] = True
+                result["full_name"] = full_name
+                
+                print(f"El nombre del usuario {username} es {full_name}")
+                logger.info(
+                    f"Match encontrado (iteracion completa): usuario '{username}' = "
+                    f"'{full_name}' en grupo '{group_name}'"
+                )
+                
+                self.close_settings_modal()
+                return result
+            
+            self.close_settings_modal()
+            time.sleep(0.2)
+        
+        logger.info(f"No se encontro match en grupo {group_name} (iteracion completa)")
+        return result
+    
+    def _navigate_to_group(self, group_name: str, current_group: str, timeout: int = 10) -> bool:
+        """
+        Navega al grupo indicado si no es el grupo actual.
+        
+        Args:
+            group_name: Grupo destino
+            current_group: Grupo donde estamos actualmente
+            timeout: Segundos de espera
+            
+        Returns:
+            bool: True si se pudo navegar (o ya estamos ahi)
+        """
+        if group_name == current_group:
+            return True
+        
+        logger.info(f"Cambiando a grupo: {group_name}")
+        if not self.select_group(group_name, timeout):
+            logger.warning(f"No se pudo seleccionar el grupo {group_name}")
+            return False
+        
+        time.sleep(1)
+        return True
+    
+    def _get_remaining_group_names(self, visited: set, timeout: int = 10) -> list:
+        """
+        Obtiene nombres de grupos aun no visitados via el dropdown.
+        
+        Se llama de forma lazy (despues de haber interactuado con la pagina)
+        para que el DOM y los componentes de Material UI esten listos.
+        
+        Args:
+            visited: Set de nombres de grupo ya visitados
+            timeout: Segundos de espera
+            
+        Returns:
+            list: Nombres de grupos pendientes de visitar
+        """
+        groups = self.get_available_groups(timeout)
+        remaining = [g["name"] for g in groups if g["name"] not in visited]
+        logger.info(f"Grupos restantes por visitar: {remaining}")
+        return remaining
     
     def find_athlete_by_username(
         self, 
@@ -1153,17 +1222,24 @@ class AthleteService:
         timeout: int = 10
     ) -> dict:
         """
-        Busca un atleta por su username iterando por todos los grupos y atletas.
+        Busca un atleta por su username iterando por todos los grupos.
         
-        OPTIMIZACION: Si se proporciona expected_name, la busqueda es mucho mas rapida
-        porque primero filtra por nombre visible (sin abrir modales) y solo verifica
-        los candidatos que coinciden. Esto reduce el tiempo de minutos a segundos.
+        Estrategia de busqueda en dos pases:
         
-        Flujo:
-        1. Busca primero en el grupo actual (My Athletes)
-        2. Si no hay match, abre dropdown y obtiene lista de grupos
-        3. Itera por los grupos restantes buscando el username
-        4. Si hay match: extrae nombre completo, imprime en consola, retorna
+        PASE 1 (rapido, por nombre): Si se proporciona expected_name, recorre
+        todos los grupos filtrando tiles por primer nombre visible. Solo abre
+        modales de candidatos cuyo primer nombre coincide. Si lo encuentra,
+        retorna inmediatamente.
+        
+        PASE 2 (fallback, por username): Si el pase 1 no encuentra match en
+        ningun grupo, recorre todos los grupos de nuevo iterando CADA tile y
+        abriendo su modal para verificar el username directamente. Esto cubre
+        casos donde el nombre en AirTable no coincide con el de TrainingPeaks.
+        
+        Si no se proporciona expected_name, solo ejecuta el pase 2.
+        
+        La lista de grupos se obtiene de forma lazy (despues de buscar en el
+        primer grupo) para que el dropdown de Material UI este listo.
         
         Args:
             username: Username a buscar (case-insensitive)
@@ -1175,59 +1251,22 @@ class AthleteService:
                   {"found": True/False, "username": str, "full_name": str, "group": str}
         """
         total_tiles_checked = 0
-        
-        if expected_name:
-            logger.info(f"Busqueda optimizada: username='{username}', expected_name='{expected_name}'")
-        
-        # 1. Buscar primero en el grupo actual (My Athletes por default)
         current_group = "My Athletes"
-        logger.info(f"Buscando en grupo actual: {current_group}")
+        remaining_groups = []  # Se obtiene lazy despues del primer grupo
         
-        result = self._search_in_current_group(
-            username=username, 
-            group_name=current_group, 
-            expected_name=expected_name,
-            timeout=timeout
-        )
-        total_tiles_checked += result["tiles_checked"]
-        
-        if result["found"]:
-            return result
-        
-        # 2. No se encontro en grupo actual, abrir dropdown para obtener otros grupos
-        logger.info("No se encontro en grupo actual, buscando en otros grupos...")
-        
-        groups = self.get_available_groups(timeout)
-        
-        if not groups:
-            logger.warning("No se encontraron grupos de atletas")
-            result["tiles_checked"] = total_tiles_checked
-            return result
-        
-        # 3. Iterar por grupos restantes (excluyendo el ya visitado)
-        visited_groups = {current_group}
-        
-        for group in groups:
-            group_name = group["name"]
+        # =====================================================================
+        # PASE 1: Busqueda rapida por primer nombre (si hay expected_name)
+        # =====================================================================
+        if expected_name:
+            logger.info(
+                f"PASE 1 - Busqueda por nombre: username='{username}', "
+                f"expected_name='{expected_name}'"
+            )
             
-            # Saltar grupos ya visitados
-            if group_name in visited_groups:
-                continue
-            
-            logger.info(f"Cambiando a grupo: {group_name}")
-            
-            # Seleccionar el grupo
-            if not self.select_group(group_name, timeout):
-                logger.warning(f"No se pudo seleccionar el grupo {group_name}")
-                continue
-            
-            # Esperar a que carguen los atletas
-            time.sleep(1)
-            
-            # Buscar en este grupo
-            result = self._search_in_current_group(
-                username=username, 
-                group_name=group_name, 
+            # 1a. Buscar en el grupo actual (My Athletes) primero
+            result = self._search_by_name_in_group(
+                username=username,
+                group_name=current_group,
                 expected_name=expected_name,
                 timeout=timeout
             )
@@ -1237,17 +1276,89 @@ class AthleteService:
                 result["tiles_checked"] = total_tiles_checked
                 return result
             
-            visited_groups.add(group_name)
+            # 1b. Obtener grupos restantes (lazy: la pagina ya esta interactiva)
+            remaining_groups = self._get_remaining_group_names(
+                visited={current_group}, timeout=timeout
+            )
+            
+            # 1c. Buscar por nombre en los demas grupos
+            for group_name in remaining_groups:
+                if not self._navigate_to_group(group_name, current_group, timeout):
+                    continue
+                current_group = group_name
+                
+                result = self._search_by_name_in_group(
+                    username=username,
+                    group_name=group_name,
+                    expected_name=expected_name,
+                    timeout=timeout
+                )
+                total_tiles_checked += result["tiles_checked"]
+                
+                if result["found"]:
+                    result["tiles_checked"] = total_tiles_checked
+                    return result
+            
+            logger.info(
+                f"PASE 1 finalizado: no se encontro '{username}' por nombre en ningun grupo. "
+                f"Tiles verificados: {total_tiles_checked}. Iniciando PASE 2 (fallback)..."
+            )
         
-        # No se encontro en ningun grupo
-        logger.warning(f"Usuario '{username}' no encontrado en ningun grupo")
-        return {
+        # =====================================================================
+        # PASE 2: Fallback - iterar todos los tiles en todos los grupos
+        # =====================================================================
+        logger.info(f"PASE 2 - Iteracion completa: buscando username='{username}' en todos los grupos")
+        
+        result = {
             "found": False,
             "username": username,
             "full_name": "",
             "group": "",
             "tiles_checked": total_tiles_checked
         }
+        
+        # Si no se obtuvieron grupos aun (expected_name era None), obtenerlos
+        # despues de buscar en el primer grupo del pase 2
+        groups_fetched = len(remaining_groups) > 0
+        
+        # 2a. Buscar en "My Athletes" primero
+        if not self._navigate_to_group("My Athletes", current_group, timeout):
+            logger.warning("No se pudo navegar a My Athletes para PASE 2")
+        else:
+            current_group = "My Athletes"
+            result = self._search_by_username_in_group(
+                username=username,
+                group_name=current_group,
+                result=result,
+                timeout=timeout
+            )
+            if result["found"]:
+                return result
+        
+        # 2b. Obtener grupos si aun no se han obtenido
+        if not groups_fetched:
+            remaining_groups = self._get_remaining_group_names(
+                visited={current_group}, timeout=timeout
+            )
+        
+        # 2c. Iterar grupos restantes
+        for group_name in remaining_groups:
+            if not self._navigate_to_group(group_name, current_group, timeout):
+                continue
+            current_group = group_name
+            
+            result = self._search_by_username_in_group(
+                username=username,
+                group_name=group_name,
+                result=result,
+                timeout=timeout
+            )
+            
+            if result["found"]:
+                return result
+        
+        logger.warning(f"Usuario '{username}' no encontrado en ningun grupo (ambos pases agotados)")
+        return result
 
     def discover_username(self, athlete_name: str, full_name: Optional[str] = None, timeout: int = 10) -> Optional[str]:
         """

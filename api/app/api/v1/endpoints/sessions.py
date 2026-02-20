@@ -162,36 +162,6 @@ async def start_session(
     return session_response
 
 
-@router.post(
-    "/sync-tp-username",
-    status_code=status.HTTP_200_OK,
-    summary="Sincronizar nombre de atleta desde TrainingPeaks"
-)
-async def sync_tp_username(
-    username: str,
-    athlete_id: str,
-    use_cases: TPSyncUseCases = Depends(get_tp_sync_use_cases)
-) -> dict:
-    """
-    Busca un atleta en TrainingPeaks por username y guarda su nombre (tp_name).
-    
-    Flujo (implementado en TPSyncUseCases):
-    1. Busca el atleta por username en TrainingPeaks
-    2. Si lo encuentra, obtiene el nombre del atleta en TP
-    3. Guarda el nombre como tp_name en PostgreSQL
-    4. Actualiza el campo tp_name en Airtable
-    
-    Args:
-        username: Username de TrainingPeaks (tp_username)
-        athlete_id: ID del atleta en la base de datos
-        use_cases: Casos de uso de sincronizacion TP
-    
-    Returns:
-        Dict con success, tp_name, message
-    """
-    return await use_cases.execute_sync_process(username=username, athlete_id=athlete_id)
-
-
 # ============================================================================
 # ENDPOINTS CON PARAMETRO {session_id}
 # ============================================================================
