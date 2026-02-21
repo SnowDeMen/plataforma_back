@@ -16,7 +16,8 @@ class AirtableAthleteDTO(BaseModel):
     airtable_id: Optional[str] = Field(None, description="ID del registro de Airtable (redundante)")
     name: str = Field(..., description="Nombre completo del atleta")
     email: Optional[str] = Field(None, description="Email del atleta")
-    status: str = Field(..., description="Estado del atleta (Plan activo, etc)")
+    training_status: Optional[str] = Field("Por generar", description="Estado del entrenamiento (Por generar, etc)")
+    client_status: Optional[str] = Field(None, description="Estado administrativo (ACTIVO, etc)")
     
     # Campos principales
     discipline: Optional[str] = None

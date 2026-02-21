@@ -21,8 +21,30 @@ from .types import FieldMapping
 
 
 def _parse_iso_date(value: Any) -> date | None:
-    # ... (existing code) ...
-    return None
+    """
+    Parsea una fecha en formato ISO 8601 (YYYY-MM-DD) desde Airtable.
+    También soporta formato compacto YYYYMMDD (string o int).
+    """
+    if value is None or value == "":
+        return None
+    
+    if isinstance(value, int):
+        value = str(value)
+        
+    if not isinstance(value, str):
+        return None
+        
+    try:
+        # date.fromisoformat soporta YYYY-MM-DD
+        # Para YYYYMMDD (compacto) y otros casos, validamos longitud y formato
+        if len(value) == 10 and "-" in value:
+            return date.fromisoformat(value)
+        elif len(value) == 8 and value.isdigit():
+            # Formato compacto YYYYMMDD
+            return date(int(value[:4]), int(value[4:6]), int(value[6:8]))
+        return None
+    except (ValueError, TypeError):
+        return None
 
 def normalize_status(value: Any) -> str:
     """

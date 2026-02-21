@@ -5,8 +5,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.infrastructure.database.models import TelegramSubscriberModel
 from app.infrastructure.repositories.athlete_repository import AthleteRepository
+from app.infrastructure.repositories.system_settings_repository import SystemSettingsRepository
 from app.infrastructure.external.telegram.telegram_client import TelegramClient
 from loguru import logger
+from datetime import datetime, timedelta
 
 class NotificationUseCases:
     """
@@ -16,6 +18,7 @@ class NotificationUseCases:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.athlete_repo = AthleteRepository(db)
+        self.settings_repo = SystemSettingsRepository(db)
         self.telegram = TelegramClient()
 
     async def sync_subscribers(self) -> dict:
@@ -68,15 +71,30 @@ class NotificationUseCases:
         Sincroniza suscriptores automáticamente antes de enviar.
         """
         try:
-            # 0. Sincronizar suscriptores automáticamente
+            # 0. Verificar throttling (seguridad contra reinicios frecuentes)
+            now = datetime.now()
+            last_sent_str = await self.settings_repo.get_value("telegram_last_notification_sent_at")
+            interval_hours = await self.settings_repo.get_value("telegram_notification_interval_hours", 24.0)
+            
+            if last_sent_str:
+                try:
+                    last_sent = datetime.fromisoformat(last_sent_str)
+                    if now - last_sent < timedelta(hours=interval_hours):
+                        elapsed = (now - last_sent).total_seconds() / 3600
+                        logger.info(f"Omitiendo notificación de Telegram: solo han pasado {elapsed:.2f}h de las {interval_hours}h requeridas.")
+                        return True
+                except ValueError:
+                    logger.warning(f"Formato de fecha inválido en telegram_last_notification_sent_at: {last_sent_str}")
+
+            # 1. Sincronizar suscriptores automáticamente
             await self.sync_subscribers()
 
-            # 1. Contar atletas pendientes (status fijo 'Por revisar')
+            # 2. Contar atletas pendientes (status fijo 'Por revisar')
             status_to_check = "Por revisar"
             count = await self.athlete_repo.count(training_status=status_to_check)
             
             if count == 0:
-                logger.info("No hay atletas 'Por Revisar' para notificar.")
+                logger.info("No hay atletas 'Por revisar' para notificar.")
                 return True
 
             # 2. Obtener lista de suscriptores activos
@@ -102,7 +120,12 @@ class NotificationUseCases:
                 if success:
                     success_count += 1
             
-            logger.info(f"Notificación enviada a {success_count}/{len(subscribers)} suscriptores.")
+            # 5. Actualizar timestamp de último envío si hubo éxito
+            if success_count > 0:
+                await self.settings_repo.set_value("telegram_last_notification_sent_at", now.isoformat())
+                await self.db.commit()
+                logger.info(f"Notificación enviada a {success_count}/{len(subscribers)} suscriptores. Timestamp actualizado.")
+            
             return success_count > 0
 
         except Exception as e:

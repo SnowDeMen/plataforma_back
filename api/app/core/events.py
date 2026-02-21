@@ -251,12 +251,14 @@ async def _run_periodic_training_generation_task() -> None:
             automation = AthleteAutomationUseCase(db)
             
             for athlete in athletes:
+                athlete_id = athlete.id
+                athlete_name = athlete.name
                 try:
                     # Ejecutar el flujo de automatización reutilizable
-                    await automation.automate_athlete_sync_and_generation(athlete.id)
+                    await automation.automate_athlete_sync_and_generation(athlete_id)
                     
                 except Exception as ex:
-                    logger.error(f"Error procesando automatización para {athlete.name}: {ex}")
+                    logger.error(f"Error procesando automatización para {athlete_name}: {ex}")
                     continue
 
     except Exception as e:

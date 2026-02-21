@@ -93,9 +93,9 @@ class AthleteAutomationUseCase:
             )
             await self.plan_use_cases.create_and_generate(dto)
             
-            # 4. Actualizar status y timestamp
+            # 4. Actualizar training_status y timestamp
             await self.repository.update(athlete_id, {
-                "status": "Por Revisar",
+                "training_status": "Por revisar",
                 "last_training_generation_at": datetime.now()
             })
             await self.db.commit()

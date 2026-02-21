@@ -92,7 +92,6 @@ class AthleteUseCases:
                 age=a.age,
                 discipline=a.discipline,
                 level=a.level,
-                status=a.training_status, # Legacy support in DTO if needed
                 training_status=a.training_status,
                 client_status=a.client_status,
                 goal=a.goal
