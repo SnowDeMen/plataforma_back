@@ -14,8 +14,16 @@ from app.infrastructure.mcp.mcp_server_manager import MCPServerManager
 from app.shared.utils.audit_logger import AuditLogger
 from app.infrastructure.external.airtable_sync.sync_service import build_from_env
 from app.infrastructure.external.airtable_sync.table_mappings import get_table_sync_config
+from app.infrastructure.database.session import init_db, close_db, AsyncSessionLocal
+from app.infrastructure.database.models import AthleteModel
+from app.application.use_cases.sync_use_cases import AthleteAutomationUseCase
+from app.application.use_cases.notification_use_cases import NotificationUseCases
+from app.application.use_cases.admin_use_cases import AdminUseCases
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from app.infrastructure.repositories.system_settings_repository import SystemSettingsRepository
+from sqlalchemy import select, or_, func
+from datetime import timedelta, datetime
 
 
 def startup_handler(app: FastAPI) -> Callable:
@@ -58,8 +66,8 @@ def startup_handler(app: FastAPI) -> Callable:
                 level=settings.LOG_LEVEL
             )
             
-            # Inicializar y programar sync de Airtable
-            await _setup_airtable_sync(app)
+            # Inicializar y programar tareas (Sync Airtable, Notificaciones, etc)
+            await _setup_scheduler(app)
             
             logger.success("Aplicacion iniciada correctamente")
             
@@ -108,28 +116,68 @@ def _print_available_urls() -> None:
     logger.opt(colors=True).info("<bold><green>" + "=" * 80 + "</green></bold>")
 
 
-async def _setup_airtable_sync(app: FastAPI) -> None:
-    """Configura y arranca el programador de sync de Airtable."""
-    if not all([settings.AIRTABLE_TOKEN, settings.AIRTABLE_BASE_ID, settings.AIRTABLE_TABLE_NAME]):
-        logger.warning("Configuracion de Airtable incompleta - el sync automatico no se iniciara")
-        return
-
+async def _setup_scheduler(app: FastAPI) -> None:
+    """Configura y arranca el programador de tareas."""
     scheduler = AsyncIOScheduler()
     
-    # Programar la tarea periódica
+    async with AsyncSessionLocal() as db:
+        # 1. Poblar configuraciones por defecto
+        admin_use_cases = AdminUseCases(db)
+        await admin_use_cases.seed_default_settings()
+        
+        # 2. Obtener intervalo de notificaciones de Telegram (desde DB o config)
+        settings_repo = SystemSettingsRepository(db)
+        tg_interval = await settings_repo.get_value("telegram_notification_interval_hours", 24.0)
+
+    # Job: Sync Airtable
+    if all([settings.AIRTABLE_TOKEN, settings.AIRTABLE_BASE_ID, settings.AIRTABLE_TABLE_NAME]):
+        scheduler.add_job(
+            _run_sync_task,
+            trigger=IntervalTrigger(hours=settings.AIRTABLE_SYNC_INTERVAL_HOURS),
+            id="airtable_sync",
+            replace_existing=True
+        )
+        if settings.RUN_STARTUP_TASKS:
+            scheduler.add_job(_run_sync_task, id="airtable_sync_initial")
+    else:
+        logger.warning("Configuracion de Airtable incompleta - el sync automatico no se iniciara")
+
+    # Job: Entrenamiento Periódico
+    if settings.RUN_STARTUP_TASKS:
+        scheduler.add_job(_run_periodic_training_generation_task, id="periodic_training_generation_initial")
+        
     scheduler.add_job(
-        _run_sync_task,
-        trigger=IntervalTrigger(hours=settings.AIRTABLE_SYNC_INTERVAL_HOURS),
-        id="airtable_sync",
+        _run_periodic_training_generation_task,
+        trigger=IntervalTrigger(hours=settings.ATHLETE_TRAINING_GEN_INTERVAL_HOURS),
+        id="periodic_training_generation",
         replace_existing=True
     )
     
-    # Para ejecutar una vez al inicio
-    scheduler.add_job(_run_sync_task, id="airtable_sync_initial")
-    
+    # Job: Notificaciones Telegram (Atletas Pendientes)
+    scheduler.add_job(
+        _run_telegram_notification_task,
+        trigger=IntervalTrigger(hours=tg_interval),
+        id="telegram_notification",
+        replace_existing=True
+    )
+    # Ejecutar una vez al inicio también si está habilitado
+    if settings.RUN_STARTUP_TASKS:
+        scheduler.add_job(_run_telegram_notification_task, id="telegram_notification_initial")
+        
     scheduler.start()
     app.state.scheduler = scheduler
-    logger.info(f"Programador de Airtable sync iniciado (intervalo: {settings.AIRTABLE_SYNC_INTERVAL_HOURS}h)")
+    logger.info(f"Programador de tareas iniciado (Sync, Entrenamientos, Telegram)")
+
+
+async def _run_telegram_notification_task() -> None:
+    """Ejecuta la notificación de Telegram para atletas pendientes."""
+    try:
+        logger.info("Ejecutando tarea de notificación de Telegram...")
+        async with AsyncSessionLocal() as db:
+            notification = NotificationUseCases(db)
+            await notification.notify_pending_review_athletes()
+    except Exception as e:
+        logger.error(f"Error en tarea de notificación de Telegram: {e}")
 
 
 async def _run_sync_task() -> None:
@@ -152,10 +200,71 @@ async def _run_sync_task() -> None:
         
         # Ejecutar el sync síncrono en un thread para no bloquear el event loop de FastAPI
         result = await asyncio.to_thread(service.run_once, config=config, pg_lock_key=lock_key)
-        logger.info(f"Sync finalizado: upserted_rows={result.upserted_rows}")
+        logger.info(f"Sync finalizado: upserted_rows={result.upserted_rows}, new_inserts={len(result.new_record_ids)}")
+        
+        # Si hay atletas nuevos, disparar flujo de automatización inicial
+        if result.new_record_ids:
+            logger.info(f"Disparando automatización inicial para {len(result.new_record_ids)} atletas nuevos")
+            async with AsyncSessionLocal() as db:
+                automation = AthleteAutomationUseCase(db)
+                for athlete_id in result.new_record_ids:
+                    # El flujo completo: Sync TP Profile -> Sync Historial -> Generación Plan
+                    await automation.automate_athlete_sync_and_generation(athlete_id)
         
     except Exception as e:
         logger.error(f"Error en tarea de sync programada: {e}")
+        logger.exception(e)
+
+
+async def _run_periodic_training_generation_task() -> None:
+    """
+    Tarea periódica para generar automáticamente entrenamientos para atletas.
+    Busca atletas que no han tenido generación reciente y dispara el flujo.
+    """
+    try:
+        logger.info("Iniciando revisión de atletas para generación periódica de entrenamientos...")
+        
+        async with AsyncSessionLocal() as db:
+            # 1. Status no es 'Inactivo' (asumimos por ahora los que están en la plataforma)
+            # 2. last_training_generation_at es NULL o hace más de X días (configurable)
+            
+            threshold_date = datetime.now() - timedelta(days=settings.ATHLETE_TRAINING_GEN_THRESHOLD_DAYS)
+            
+            query = select(AthleteModel).where(
+                or_(
+                    AthleteModel.last_training_generation_at == None,
+                    AthleteModel.last_training_generation_at <= threshold_date
+                )
+            ).where(
+                AthleteModel.is_deleted == False
+            ).where(
+                func.lower(AthleteModel.client_status).in_(["activo", "prueba"])
+            )
+            
+            result = await db.execute(query)
+            athletes = result.scalars().all()
+            
+            if not athletes:
+                logger.info("No hay atletas que requieran generación periódica en este momento.")
+                return
+
+            logger.info(f"Se encontraron {len(athletes)} atletas para revisión de automatización.")
+            
+            automation = AthleteAutomationUseCase(db)
+            
+            for athlete in athletes:
+                athlete_id = athlete.id
+                athlete_name = athlete.name
+                try:
+                    # Ejecutar el flujo de automatización reutilizable
+                    await automation.automate_athlete_sync_and_generation(athlete_id)
+                    
+                except Exception as ex:
+                    logger.error(f"Error procesando automatización para {athlete_name}: {ex}")
+                    continue
+
+    except Exception as e:
+        logger.error(f"Error en tarea de generación periódica: {e}")
         logger.exception(e)
 
 

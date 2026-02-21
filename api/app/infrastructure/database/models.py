@@ -9,6 +9,63 @@ from app.infrastructure.database.session import Base
 from app.shared.constants.agent_constants import AgentType, AgentStatus, ConversationStatus
 
 
+class SyncStateModel(Base):
+    """
+    Modelo para cursor de sincronización (Airtable -> Postgres).
+    Define el estado de la sincronización incremental.
+    """
+    __tablename__ = "sync_state"
+    
+    source = Column(Text, primary_key=True)
+    source_table = Column(Text, primary_key=True)
+    target_schema = Column(Text, primary_key=True)
+    target_table = Column(Text, primary_key=True)
+    
+    cursor_last_modified = Column(DateTime(timezone=True), nullable=False, server_default=func.text("'1970-01-01 00:00:00+00'::timestamp with time zone"))
+    last_run_started_at = Column(DateTime(timezone=True), nullable=True)
+    last_run_completed_at = Column(DateTime(timezone=True), nullable=True)
+    last_run_status = Column(Text, nullable=True)
+    last_run_error = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<SyncState({self.source_table} -> {self.target_table})>"
+
+
+class SystemSettingsModel(Base):
+    """
+    Modelo para configuraciones dinámicas del sistema.
+    Permite cambiar parámetros (como intervalos de notación) sin reiniciar el server.
+    """
+    __tablename__ = "system_settings"
+    
+    key = Column(String(255), primary_key=True, index=True)
+    value = Column(JSON, nullable=False)
+    description = Column(Text, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<SystemSettings(key={self.key}, value={self.value})>"
+
+
+class TelegramSubscriberModel(Base):
+    """
+    Modelo para suscriptores de notificaciones de Telegram.
+    Guarda los chat_id de quienes han iniciado conversación con el bot.
+    """
+    __tablename__ = "telegram_subscribers"
+    
+    chat_id = Column(String(255), primary_key=True, index=True)
+    username = Column(String(255), nullable=True)
+    first_name = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<TelegramSubscriber(chat_id={self.chat_id}, username={self.username})>"
+
+
 class AgentModel(Base):
     """Modelo de base de datos para agentes."""
     
@@ -112,6 +169,7 @@ class AthleteModel(Base):
     airtable_last_modified = Column(DateTime(timezone=True), nullable=True)
     synced_at = Column(DateTime(timezone=True), nullable=True)
     is_deleted = Column(Boolean, nullable=False, default=False)
+    last_training_generation_at = Column(DateTime(timezone=True), nullable=True)
 
     # Datos Principales (Mapeados desde Airtable)
     name = Column(String(255), nullable=False, index=True)
@@ -120,11 +178,7 @@ class AthleteModel(Base):
     email = Column(String, nullable=True)
     tp_username = Column(String, nullable=True)  # Username de TrainingPeaks (Cuenta TrainingPeaks)
     tp_name = Column(String, nullable=True)  # Nombre del atleta en TrainingPeaks
-    status = Column(String(50), default="Por generar", index=True)
-    
-    # TrainingPeaks Integration
-    tp_username = Column(String, nullable=True)  # Cuenta TrainingPeaks (desde Airtable)
-    tp_name = Column(String, nullable=True)      # Nombre validado en TrainingPeaks
+    training_status = Column(String(50), default="Por generar", index=True)
     
     # Perfil Deportivo y Fisico
     discipline = Column(String(100), nullable=True)
@@ -227,7 +281,7 @@ class AthleteModel(Base):
     performance = Column(JSON, nullable=True) 
     
     def __repr__(self):
-        return f"<Athlete(id={self.id}, name={self.name}, status={self.status})>"
+        return f"<Athlete(id={self.id}, name={self.name}, training_status={self.training_status})>"
 
 
 

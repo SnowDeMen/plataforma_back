@@ -48,7 +48,7 @@ async def test_approve_and_apply_marks_plan_as_applied(db_session):
         "id": "ath-1",
         "name": "Atleta Test",
         "tp_name": "Atleta Test TP",  # tp_name es requerido
-        "status": "activo",
+        "training_status": "Plan activo",
     })
     await db_session.commit()
     
@@ -110,7 +110,7 @@ async def test_approve_and_apply_does_not_apply_on_publisher_failure(db_session)
         "id": "ath-fail-test",
         "name": "Atleta Fail Test",
         "tp_name": "Atleta Fail TP",  # tp_name es requerido
-        "status": "activo",
+        "training_status": "Plan activo",
     })
     await db_session.commit()
     
@@ -166,7 +166,7 @@ async def test_approve_and_apply_uses_tp_name_not_athlete_name(db_session):
         "id": "ath-tp-test",
         "name": "Nombre En BD",
         "tp_name": "Nombre En TrainingPeaks",  # Este es el que se debe usar
-        "status": "activo",
+        "training_status": "Plan activo",
     })
     await db_session.commit()
     
@@ -215,7 +215,7 @@ async def test_approve_and_apply_fails_if_no_tp_name(db_session):
         "id": "ath-no-tp",
         "name": "Atleta Sin TP",
         "tp_name": None,  # Sin tp_name
-        "status": "activo",
+        "training_status": "Plan activo",
     })
     await db_session.commit()
     

@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(default=False)
     ENVIRONMENT: str = Field(default="production")
     
+    # Automatización y Tareas
+    RUN_STARTUP_TASKS: bool = Field(default=False)
+    
     # Configuracion del servidor
     HOST: str = Field(default="0.0.0.0")
     PORT: int = Field(default=8000)
@@ -82,9 +85,17 @@ class Settings(BaseSettings):
     AIRTABLE_PG_SCHEMA: str = Field(default="airtable")
     AIRTABLE_PG_TABLE: str = Field(default="")
     
+    # Athlete Training Generation
+    ATHLETE_TRAINING_GEN_INTERVAL_HOURS: float = Field(default=12.0)
+    ATHLETE_TRAINING_GEN_THRESHOLD_DAYS: int = Field(default=28)
+    ATHLETE_TRAINING_GEN_WEEKS: int = Field(default=4)
+    
     # Logging
     LOG_LEVEL: str = Field(default="INFO")
     LOG_FILE: str = Field(default="logs/app.log")
+
+    # Telegram Notifications
+    TELEGRAM_BOT_TOKEN: str = Field(default="")
     
     # Rate limiting
     RATE_LIMIT_PER_MINUTE: int = Field(default=60)
