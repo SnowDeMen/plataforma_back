@@ -178,7 +178,7 @@ class AthleteModel(Base):
     email = Column(String, nullable=True)
     tp_username = Column(String, nullable=True)  # Username de TrainingPeaks (Cuenta TrainingPeaks)
     tp_name = Column(String, nullable=True)  # Nombre del atleta en TrainingPeaks
-    training_status = Column(String(50), default="Por generar", index=True)
+    training_status = Column(String(50), server_default="Por generar", index=True)
     
     # Perfil Deportivo y Fisico
     discipline = Column(String(100), nullable=True)
