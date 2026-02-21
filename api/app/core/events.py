@@ -22,7 +22,7 @@ from app.application.use_cases.admin_use_cases import AdminUseCases
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.infrastructure.repositories.system_settings_repository import SystemSettingsRepository
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from datetime import timedelta, datetime
 
 
@@ -237,6 +237,8 @@ async def _run_periodic_training_generation_task() -> None:
                 )
             ).where(
                 AthleteModel.is_deleted == False
+            ).where(
+                func.lower(AthleteModel.client_status).in_(["activo", "prueba"])
             )
             
             result = await db.execute(query)

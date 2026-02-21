@@ -168,7 +168,7 @@ class AthleteListItemDTO(BaseModel):
     age: Optional[int] = None
     discipline: Optional[str] = None
     level: Optional[str] = None
-    training_status: str
+    training_status: Optional[str] = "Por generar"
     client_status: Optional[str] = None
     goal: Optional[str] = None
     

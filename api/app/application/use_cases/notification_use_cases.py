@@ -89,9 +89,12 @@ class NotificationUseCases:
             # 1. Sincronizar suscriptores automáticamente
             await self.sync_subscribers()
 
-            # 2. Contar atletas pendientes (status fijo 'Por revisar')
+            # 2. Contar atletas pendientes (status fijo 'Por revisar') solo para activo/prueba
             status_to_check = "Por revisar"
-            count = await self.athlete_repo.count(training_status=status_to_check)
+            count = await self.athlete_repo.count(
+                training_status=status_to_check,
+                client_statuses=["activo", "prueba"]
+            )
             
             if count == 0:
                 logger.info("No hay atletas 'Por revisar' para notificar.")

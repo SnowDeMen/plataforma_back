@@ -38,6 +38,12 @@ class AthleteAutomationUseCase:
             logger.error(f"Atleta {athlete_id} no encontrado")
             return
 
+        # Nueva restricción: Solo 'activo' o 'prueba'
+        allowed_statuses = ["activo", "prueba"]
+        if not athlete.client_status or athlete.client_status.lower() not in allowed_statuses:
+            logger.info(f"Omitiendo automatización para {athlete.name}: status '{athlete.client_status}' no es elegible.")
+            return
+
         logger.info(f"Iniciando automatización completa para: {athlete.name}")
 
         # 1. Sincronizar Username y tp_name si es necesario

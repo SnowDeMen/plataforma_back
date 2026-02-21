@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, func
 from loguru import logger
 
 from app.infrastructure.database.models import AthleteModel
@@ -35,6 +35,7 @@ class AthleteRepository:
         self,
         training_status: Optional[str] = None,
         client_status: Optional[str] = None,
+        client_statuses: Optional[List[str]] = None,
         discipline: Optional[str] = None,
         limit: int = 100,
         offset: int = 0
@@ -57,7 +58,9 @@ class AthleteRepository:
         if training_status:
             query = query.where(AthleteModel.training_status == training_status)
         if client_status:
-            query = query.where(AthleteModel.client_status == client_status)
+            query = query.where(func.lower(AthleteModel.client_status) == client_status.lower())
+        if client_statuses:
+            query = query.where(func.lower(AthleteModel.client_status).in_([s.lower() for s in client_statuses]))
         if discipline:
             query = query.where(AthleteModel.discipline == discipline)
         
@@ -183,22 +186,23 @@ class AthleteRepository:
         
         return False
 
-    async def count(self, training_status: Optional[str] = None) -> int:
+    async def count(self, training_status: Optional[str] = None, client_statuses: Optional[List[str]] = None) -> int:
         """
-        Cuenta el numero de atletas, opcionalmente filtrados por training_status.
+        Cuenta el numero de atletas, opcionalmente filtrados por status.
         
         Args:
             training_status: Filtrar por training_status (opcional)
+            client_statuses: Filtrar por lista de client_status (opcional)
             
         Returns:
             Numero de atletas
         """
-        from sqlalchemy import func
-        
         query = select(func.count(AthleteModel.id))
         
         if training_status:
             query = query.where(AthleteModel.training_status == training_status)
+        if client_statuses:
+            query = query.where(func.lower(AthleteModel.client_status).in_([s.lower() for s in client_statuses]))
         
         result = await self.db.execute(query)
         return result.scalar() or 0
