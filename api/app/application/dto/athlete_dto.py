@@ -146,7 +146,7 @@ class AthleteDTO(BaseModel):
     discipline: Optional[str] = None
     level: Optional[str] = None
     goal: Optional[str] = None
-    training_status: str = "Por generar"
+    training_status: Optional[str] = "Por generar"
     client_status: Optional[str] = None
     experience: Optional[str] = None
     tp_username: Optional[str] = None  # Cuenta TrainingPeaks (desde Airtable)
