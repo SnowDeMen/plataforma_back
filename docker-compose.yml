@@ -1,5 +1,5 @@
 # Docker Compose - Backend API
-# Servicio independiente: FastAPI + Selenium + MCP
+# Servicio independiente: FastAPI + Selenium
 
 services:
   back-api:

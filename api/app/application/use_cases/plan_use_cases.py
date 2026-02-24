@@ -424,7 +424,7 @@ class PlanUseCases:
 
         Reglas:
         - Flujo determinista y bloqueante (la request espera el resultado).
-        - NO usa MCP: se levanta una sesion efimera de Selenium para publicar los workouts.
+        - Se levanta una sesion efimera de Selenium para publicar los workouts.
         - Si cualquier paso falla, NO se marca el plan como 'applied'.
         - Usa tp_name del atleta (obtenido via tp_sync) para seleccionarlo en TrainingPeaks.
         """

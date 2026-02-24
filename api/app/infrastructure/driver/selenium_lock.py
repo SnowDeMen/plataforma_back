@@ -3,7 +3,7 @@ Lock de Selenium por sesion.
 
 Motivacion:
 - El driver de Selenium NO es seguro para uso concurrente.
-- En este proyecto, varias rutas (chat/MCP/historial) pueden intentar usar
+- En este proyecto, varias rutas (chat/historial/planes) pueden intentar usar
   el mismo driver asociado a `session_id`.
 - Necesitamos serializar el acceso sin introducir dependencias externas.
 

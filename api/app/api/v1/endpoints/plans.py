@@ -218,7 +218,7 @@ async def approve_plan(
 @router.post(
     "/{plan_id}/approve-and-apply",
     response_model=TrainingPlanDTO,
-    summary="Aprobar y aplicar un plan de entrenamiento en TrainingPeaks (Selenium directo, sin MCP)"
+    summary="Aprobar y aplicar un plan de entrenamiento en TrainingPeaks (Selenium directo)"
 )
 async def approve_and_apply_plan(
     plan_id: int,
@@ -229,7 +229,6 @@ async def approve_and_apply_plan(
     Aprueba y aplica un plan de entrenamiento a TrainingPeaks.
 
     Reglas del flujo:
-    - NO usa MCP.
     - Crea una sesión efímera de Selenium, hace login con cookies y selecciona atleta.
     - Crea workouts en Workout Library y los arrastra al calendario en las fechas del plan.
     - Si todo sale bien, marca el plan como 'applied'.

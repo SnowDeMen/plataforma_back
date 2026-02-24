@@ -127,40 +127,6 @@ Una vez iniciado el servidor, accede a:
 - **Alembic**: Migraciones de base de datos
 - **pytest**: Framework de testing
 
-## 🤖 Agente Genérico con MCP
-
-El proyecto incluye un **agente genérico** con capacidad MCP (Model Context Protocol):
-
-```python
-from app.infrastructure.autogen.generic_mcp_agent import create_generic_mcp_agent
-
-# Crear agente con system prompt personalizable
-agent = create_generic_mcp_agent(
-    name="MiAgente",
-    system_message="Escribir aqui system prompt"
-)
-
-# Conectar MCP cuando lo necesites
-mcp_servers = [{
-    "name": "filesystem",
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-filesystem", "./"]
-}]
-agent.enable_mcp(mcp_servers)
-```
-
-**Características:**
-- ✅ System prompt: `"Escribir aqui system prompt"` (personalizable)
-- ✅ MCP: `None` por defecto (para conectar manualmente)
-- ✅ Compatible con `autogen.agentchat.contrib`
-
-**Inicio Rápido:**
-```bash
-python examples/quick_start_mcp.py
-```
-
-**Documentación completa:** `examples/README_MCP_AGENT.md`
-
 ## Contribución
 
 1. Cada nueva funcionalidad debe seguir la estructura de capas

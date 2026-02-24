@@ -19,7 +19,6 @@ from app.application.dto.chat_dto import (
 from app.infrastructure.repositories.chat_repository import ChatRepository
 from app.infrastructure.autogen.chat_manager import ChatManager
 from app.infrastructure.driver.driver_manager import DriverManager
-from app.infrastructure.mcp.mcp_server_manager import MCPServerManager
 from app.shared.exceptions.domain import SessionNotFoundException
 from app.shared.utils.audit_logger import AuditLogger
 
@@ -70,55 +69,6 @@ class ChatUseCases:
         
         return True
     
-    async def _ensure_mcp_initialized(self, session_id: str) -> bool:
-        """
-        Verifica e inicializa el servidor MCP si hay un driver activo pero no esta conectado.
-        
-        Esto es necesario para sesiones restauradas donde el agente existe en memoria
-        pero el servidor MCP no fue reinicializado despues de un reinicio del servidor.
-        
-        Args:
-            session_id: ID de la sesion
-            
-        Returns:
-            True si el servidor MCP esta listo, False si no hay driver disponible
-        """
-        # Verificar si el servidor MCP ya esta inicializado para esta sesion
-        if MCPServerManager.is_running() and MCPServerManager.get_current_session_id() == session_id:
-            return True
-        
-        # Buscar si hay un driver activo para esta sesion
-        driver_session = DriverManager.get_session(session_id)
-        
-        if not driver_session or not driver_session.is_active:
-            # No hay driver activo, el servidor MCP no puede inicializarse
-            logger.debug(f"No hay driver activo para sesion {session_id}, servidor MCP no disponible")
-            return False
-        
-        # Hay driver activo, iniciar servidor MCP
-        mcp_initialized = MCPServerManager.start(
-            driver=driver_session.driver,
-            wait=driver_session.wait,
-            session_id=session_id,
-            run_server=False
-        )
-        
-        if mcp_initialized:
-            logger.info(f"Servidor MCP reinicializado para sesion restaurada {session_id}")
-            AuditLogger.log_mcp_call(
-                session_id=session_id,
-                action="MCP_SERVER_REINITIALIZE",
-                details={
-                    "reason": "session_restored",
-                    "tools_available": MCPServerManager.get_available_tools()
-                },
-                success=True
-            )
-        else:
-            logger.warning(f"No se pudo reinicializar servidor MCP para sesion {session_id}")
-        
-        return mcp_initialized
-    
     async def send_message(
         self, 
         session_id: str, 
@@ -157,9 +107,6 @@ class ChatUseCases:
             athlete_name=chat_session.athlete_name,
             resume=True
         )
-        
-        # Verificar e inicializar MCP si hay driver activo pero MCP no conectado
-        await self._ensure_mcp_initialized(session_id)
         
         # Obtener o restaurar el agente
         agent = ChatManager.get_agent(session_id)

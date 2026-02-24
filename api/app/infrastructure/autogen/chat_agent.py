@@ -1,6 +1,5 @@
 """
 ChatAgent - Agente de chat con memoria persistente y function calling.
-Soporta herramientas del MCP para interactuar con TrainingPeaks.
 """
 import json
 from typing import Optional, List, Dict, Any
@@ -12,7 +11,6 @@ from loguru import logger
 
 from app.core.config import settings
 from app.shared.utils.audit_logger import AuditLogger
-from app.infrastructure.mcp.mcp_tools import MCPToolsAdapter
 from .base_agent import BaseAgent, TextMessage, AgentResponse
 
 
@@ -85,7 +83,6 @@ class ChatAgent(BaseAgent):
     - Mantiene historial de conversacion en memoria y base de datos
     - System message configurable para personalizar comportamiento
     - Soporta restauracion de conversaciones previas
-    - Integrado con herramientas del MCP para TrainingPeaks
     - Function calling automatico para ejecutar acciones
     
     Ejemplo de uso:
@@ -270,7 +267,7 @@ Responde siempre en español.
             system_message: Instrucciones del sistema para el agente
             model: Modelo de LLM a utilizar (default: settings.AUTOGEN_MODEL)
             initial_history: Historial previo de mensajes para restaurar
-            use_tools: Si True, habilita function calling con herramientas MCP
+            use_tools: Si True, habilita function calling con herramientas
             **kwargs: Argumentos adicionales para BaseAgent
         """
         # Construir contexto de fecha actual
@@ -386,9 +383,6 @@ Nombre: {athlete_name}
         
         self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
         
-        # Verificar disponibilidad de herramientas
-        tools_available = MCPToolsAdapter.is_available() if self.use_tools else False
-        
         # Log de configuracion del agente
         logger.info(
             f"ChatAgent '{self.name}' inicializado:\n"
@@ -397,7 +391,6 @@ Nombre: {athlete_name}
             f"  Temperature: {self.temperature}\n"
             f"  Max tokens: {self.max_tokens}\n"
             f"  Tools enabled: {self.use_tools}\n"
-            f"  Tools available: {tools_available}\n"
             f"  API Key configured: {'Yes' if settings.OPENAI_API_KEY else 'NO!'}"
         )
         
@@ -411,7 +404,6 @@ Nombre: {athlete_name}
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
                 "use_tools": self.use_tools,
-                "tools_available": tools_available,
                 "system_message_length": len(self.system_message)
             }
         )
@@ -598,17 +590,10 @@ Nombre: {athlete_name}
         else:
             api_params["max_tokens"] = self.max_tokens
         
-        # Agregar herramientas si estan habilitadas y disponibles
-        if self.use_tools and MCPToolsAdapter.is_available():
-            tools = MCPToolsAdapter.get_openai_tools()
-            if tools:
-                api_params["tools"] = tools
-                api_params["tool_choice"] = "auto"
-        
         return api_params
     
     async def _execute_tool_call(self, tool_call) -> str:
-        """Ejecuta una herramienta y retorna el resultado."""
+        """Ejecuta una herramienta y retorna el resultado (actualmente sin herramientas disponibles)."""
         function_name = tool_call.function.name
         
         try:
@@ -616,37 +601,12 @@ Nombre: {athlete_name}
         except json.JSONDecodeError:
             arguments = {}
         
-        logger.info(
-            f"ChatAgent '{self.name}': Ejecutando herramienta {function_name} "
-            f"con args: {arguments}"
+        logger.warning(
+            f"ChatAgent '{self.name}': Tool call solicitado para {function_name} "
+            f"pero no hay herramientas configuradas. Args: {arguments}"
         )
         
-        # Log de la herramienta
-        AuditLogger.log_mcp_call(
-            session_id=self.session_id,
-            action=f"TOOL_CALL_{function_name.upper()}",
-            details={"arguments": arguments},
-            success=True
-        )
-        
-        # Ejecutar la herramienta usando el executor dedicado de Selenium.
-        # run_selenium() usa ThreadPoolExecutor dedicado y semaforo global
-        # para limitar operaciones de Selenium concurrentes.
-        from app.infrastructure.driver.selenium_executor import run_selenium
-        
-        result = await run_selenium(
-            MCPToolsAdapter.execute_tool,
-            tool_name=function_name,
-            arguments=arguments,
-            session_id=self.session_id
-        )
-        
-        logger.info(
-            f"ChatAgent '{self.name}': Herramienta {function_name} completada. "
-            f"Resultado: {len(result)} chars"
-        )
-        
-        return result
+        return json.dumps({"error": f"Herramienta '{function_name}' no disponible."})
     
     def _log_openai_request(self, api_params: Dict[str, Any], iteration: int = 1) -> None:
         """Registra la request enviada a OpenAI."""
@@ -687,9 +647,9 @@ Nombre: {athlete_name}
             f"  Tools: {tools_info}"
         )
         
-        AuditLogger.log_mcp_call(
+        AuditLogger.log_event(
             session_id=self.session_id,
-            action="OPENAI_REQUEST",
+            event="OPENAI_REQUEST",
             details={
                 "iteration": iteration,
                 "model": log_params.get("model"),
@@ -698,8 +658,7 @@ Nombre: {athlete_name}
                 "max_tokens": log_params.get("max_completion_tokens") or log_params.get("max_tokens") or "unlimited",
                 "tools_count": len(log_params.get("tools", [])),
                 "messages_preview": log_params.get("messages", [])[:3]  # Solo primeros 3
-            },
-            success=True
+            }
         )
     
     def _log_openai_response(self, response: Any, iteration: int = 1) -> None:
@@ -725,9 +684,9 @@ Nombre: {athlete_name}
             f"  Completion tokens: {response.usage.completion_tokens if response.usage else 0}"
         )
         
-        AuditLogger.log_mcp_call(
+        AuditLogger.log_event(
             session_id=self.session_id,
-            action="OPENAI_RESPONSE",
+            event="OPENAI_RESPONSE",
             details={
                 "iteration": iteration,
                 "model": response.model,
@@ -741,8 +700,7 @@ Nombre: {athlete_name}
                     "completion_tokens": response.usage.completion_tokens if response.usage else 0,
                     "total_tokens": response.usage.total_tokens if response.usage else 0
                 }
-            },
-            success=bool(content or tool_calls)
+            }
         )
     
     def _log_empty_response(self, response: Any) -> None:

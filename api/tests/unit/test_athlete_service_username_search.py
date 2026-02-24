@@ -156,21 +156,99 @@ class TestAthleteServiceUsernameSearch:
         assert full_name == "Juan Perez"
     
     # =========================================================================
-    # Tests para _search_in_current_group
+    # Tests para _search_by_name_in_group (busqueda rapida por nombre)
     # =========================================================================
     
-    def test_search_in_current_group_returns_not_found_when_no_tiles(self, athlete_service):
+    def test_search_by_name_returns_not_found_when_no_tiles(self, athlete_service):
         """Verifica que retorna not found cuando no hay tiles."""
         with patch.object(athlete_service, 'get_athlete_tiles', return_value=[]):
-            result = athlete_service._search_in_current_group("testuser", "My Athletes")
+            result = athlete_service._search_by_name_in_group(
+                "testuser", "My Athletes", "Test User"
+            )
         
         assert result["found"] is False
         assert result["username"] == "testuser"
         assert result["tiles_checked"] == 0
     
-    def test_search_in_current_group_finds_matching_username(self, athlete_service):
+    def test_search_by_name_finds_matching_username(self, athlete_service):
         """Verifica que encuentra el atleta correcto por username."""
         mock_tile = Mock()
+        
+        with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
+             patch.object(athlete_service, '_filter_tiles_by_name', return_value=[(mock_tile, "Juan Perez")]), \
+             patch.object(athlete_service, 'click_athlete_settings_button', return_value=True), \
+             patch.object(athlete_service, 'wait_for_settings_modal', return_value=True), \
+             patch.object(athlete_service, 'get_username_from_modal', return_value="juanperez123"), \
+             patch.object(athlete_service, 'get_full_name_from_modal', return_value="Juan Alberto Perez"), \
+             patch.object(athlete_service, 'close_settings_modal', return_value=True):
+            
+            result = athlete_service._search_by_name_in_group(
+                "juanperez123", "My Athletes", "Juan Perez"
+            )
+        
+        assert result["found"] is True
+        assert result["username"] == "juanperez123"
+        assert result["full_name"] == "Juan Alberto Perez"
+        assert result["group"] == "My Athletes"
+    
+    def test_search_by_name_skips_when_no_candidates(self, athlete_service):
+        """Verifica que retorna not found si no hay candidatos por nombre."""
+        mock_tile = Mock()
+        
+        with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
+             patch.object(athlete_service, '_filter_tiles_by_name', return_value=[]):
+            
+            result = athlete_service._search_by_name_in_group(
+                "testuser", "My Athletes", "Test User"
+            )
+        
+        assert result["found"] is False
+        assert result["tiles_checked"] == 0
+    
+    def test_search_by_name_case_insensitive_match(self, athlete_service):
+        """Verifica que la busqueda de username es case-insensitive."""
+        mock_tile = Mock()
+        
+        with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
+             patch.object(athlete_service, '_filter_tiles_by_name', return_value=[(mock_tile, "John Doe")]), \
+             patch.object(athlete_service, 'click_athlete_settings_button', return_value=True), \
+             patch.object(athlete_service, 'wait_for_settings_modal', return_value=True), \
+             patch.object(athlete_service, 'get_username_from_modal', return_value="JohnDoe"), \
+             patch.object(athlete_service, 'get_full_name_from_modal', return_value="John Doe"), \
+             patch.object(athlete_service, 'close_settings_modal', return_value=True):
+            
+            result = athlete_service._search_by_name_in_group(
+                "johndoe", "My Athletes", "John Doe"
+            )
+        
+        assert result["found"] is True
+        assert result["full_name"] == "John Doe"
+    
+    # =========================================================================
+    # Tests para _search_by_username_in_group (busqueda exhaustiva)
+    # =========================================================================
+    
+    def test_search_by_username_returns_not_found_when_no_tiles(self, athlete_service):
+        """Verifica que retorna not found cuando no hay tiles."""
+        initial_result = {
+            "found": False, "username": "testuser",
+            "full_name": "", "group": "", "tiles_checked": 0
+        }
+        with patch.object(athlete_service, 'get_athlete_tiles', return_value=[]):
+            result = athlete_service._search_by_username_in_group(
+                "testuser", "My Athletes", initial_result
+            )
+        
+        assert result["found"] is False
+        assert result["tiles_checked"] == 0
+    
+    def test_search_by_username_finds_matching_username(self, athlete_service):
+        """Verifica que encuentra el atleta iterando todos los tiles."""
+        mock_tile = Mock()
+        initial_result = {
+            "found": False, "username": "juanperez123",
+            "full_name": "", "group": "", "tiles_checked": 0
+        }
         
         with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
              patch.object(athlete_service, 'get_athlete_name_from_tile', return_value="Juan Perez"), \
@@ -180,19 +258,23 @@ class TestAthleteServiceUsernameSearch:
              patch.object(athlete_service, 'get_full_name_from_modal', return_value="Juan Alberto Perez"), \
              patch.object(athlete_service, 'close_settings_modal', return_value=True):
             
-            result = athlete_service._search_in_current_group("juanperez123", "My Athletes")
+            result = athlete_service._search_by_username_in_group(
+                "juanperez123", "My Athletes", initial_result
+            )
         
         assert result["found"] is True
-        assert result["username"] == "juanperez123"
         assert result["full_name"] == "Juan Alberto Perez"
-        assert result["group"] == "My Athletes"
+        assert result["tiles_checked"] == 1
     
-    def test_search_in_current_group_continues_on_non_matching_username(self, athlete_service):
+    def test_search_by_username_continues_on_non_matching(self, athlete_service):
         """Verifica que continua buscando si el username no coincide."""
         mock_tile1 = Mock()
         mock_tile2 = Mock()
+        initial_result = {
+            "found": False, "username": "usuariobuscado",
+            "full_name": "", "group": "", "tiles_checked": 0
+        }
         
-        # Primer tile no coincide, segundo si
         usernames = iter(["otrousuario", "usuariobuscado"])
         
         with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile1, mock_tile2]), \
@@ -203,35 +285,21 @@ class TestAthleteServiceUsernameSearch:
              patch.object(athlete_service, 'get_full_name_from_modal', return_value="Nombre Encontrado"), \
              patch.object(athlete_service, 'close_settings_modal', return_value=True):
             
-            result = athlete_service._search_in_current_group("usuariobuscado", "Test Group")
+            result = athlete_service._search_by_username_in_group(
+                "usuariobuscado", "Test Group", initial_result
+            )
         
         assert result["found"] is True
         assert result["tiles_checked"] == 2
     
-    def test_search_in_current_group_case_insensitive_match(self, athlete_service):
-        """Verifica que la busqueda es case-insensitive."""
+    def test_search_by_username_case_insensitive(self, athlete_service):
+        """Verifica que la busqueda de username es case-insensitive."""
         mock_tile = Mock()
+        initial_result = {
+            "found": False, "username": "JOHNDOE",
+            "full_name": "", "group": "", "tiles_checked": 0
+        }
         
-        # El modal retorna "JohnDoe" pero buscamos "johndoe" (diferente case)
-        with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
-             patch.object(athlete_service, 'get_athlete_name_from_tile', return_value="John Doe"), \
-             patch.object(athlete_service, 'click_athlete_settings_button', return_value=True), \
-             patch.object(athlete_service, 'wait_for_settings_modal', return_value=True), \
-             patch.object(athlete_service, 'get_username_from_modal', return_value="JohnDoe"), \
-             patch.object(athlete_service, 'get_full_name_from_modal', return_value="John Doe"), \
-             patch.object(athlete_service, 'close_settings_modal', return_value=True):
-            
-            # Buscar con lowercase debe encontrar el uppercase
-            result = athlete_service._search_in_current_group("johndoe", "My Athletes")
-        
-        assert result["found"] is True
-        assert result["full_name"] == "John Doe"
-    
-    def test_search_in_current_group_case_insensitive_uppercase_search(self, athlete_service):
-        """Verifica que buscar con MAYUSCULAS encuentra minusculas."""
-        mock_tile = Mock()
-        
-        # El modal retorna "johndoe" pero buscamos "JOHNDOE"
         with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
              patch.object(athlete_service, 'get_athlete_name_from_tile', return_value="John Doe"), \
              patch.object(athlete_service, 'click_athlete_settings_button', return_value=True), \
@@ -240,18 +308,19 @@ class TestAthleteServiceUsernameSearch:
              patch.object(athlete_service, 'get_full_name_from_modal', return_value="John Doe"), \
              patch.object(athlete_service, 'close_settings_modal', return_value=True):
             
-            # Buscar con UPPERCASE debe encontrar el lowercase
-            result = athlete_service._search_in_current_group("JOHNDOE", "My Athletes")
+            result = athlete_service._search_by_username_in_group(
+                "JOHNDOE", "My Athletes", initial_result
+            )
         
         assert result["found"] is True
         assert result["full_name"] == "John Doe"
     
     # =========================================================================
-    # Tests para find_athlete_by_username
+    # Tests para find_athlete_by_username (two-pass strategy)
     # =========================================================================
     
-    def test_find_athlete_by_username_found_in_first_group(self, athlete_service):
-        """Verifica que retorna resultado cuando encuentra en primer grupo."""
+    def test_find_athlete_by_username_found_in_first_group_by_name(self, athlete_service):
+        """Verifica que retorna resultado cuando encuentra en primer grupo (pase 1)."""
         expected_result = {
             "found": True,
             "username": "testuser",
@@ -260,71 +329,62 @@ class TestAthleteServiceUsernameSearch:
             "tiles_checked": 1
         }
         
-        with patch.object(athlete_service, '_search_in_current_group', return_value=expected_result):
-            result = athlete_service.find_athlete_by_username("testuser")
+        with patch.object(athlete_service, '_search_by_name_in_group', return_value=expected_result):
+            result = athlete_service.find_athlete_by_username(
+                "testuser", expected_name="Test User"
+            )
         
         assert result["found"] is True
         assert result["full_name"] == "Test User"
     
-    def test_find_athlete_by_username_searches_other_groups_when_not_found(self, athlete_service):
-        """Verifica que busca en otros grupos si no encuentra en el primero."""
-        first_result = {
-            "found": False,
-            "username": "testuser",
-            "full_name": "",
-            "group": "My Athletes",
-            "tiles_checked": 5
-        }
-        second_result = {
-            "found": True,
-            "username": "testuser",
-            "full_name": "Test User Found",
-            "group": "Another Group",
-            "tiles_checked": 3
+    def test_find_athlete_by_username_searches_other_groups_in_pass2(self, athlete_service):
+        """Verifica que busca en otros grupos en pase 2 si pase 1 no encuentra."""
+        # Pase 1 results: not found in any group
+        name_result = {
+            "found": False, "username": "testuser",
+            "full_name": "", "group": "My Athletes", "tiles_checked": 0
         }
         
-        groups = [
-            {"name": "My Athletes", "value": "1", "selected": True},
-            {"name": "Another Group", "value": "2", "selected": False}
-        ]
+        # Pase 2: found in second group via brute force
+        def username_search_side_effect(username, group_name, result, timeout=10):
+            if group_name == "Another Group":
+                result["found"] = True
+                result["full_name"] = "Test User Found"
+                result["group"] = "Another Group"
+            result["tiles_checked"] += 3
+            return result
         
-        search_results = iter([first_result, second_result])
-        
-        def search_side_effect(**kwargs):
-            return next(search_results)
-        
-        with patch.object(athlete_service, '_search_in_current_group', side_effect=search_side_effect), \
-             patch.object(athlete_service, 'get_available_groups', return_value=groups), \
-             patch.object(athlete_service, 'select_group', return_value=True), \
-             patch('time.sleep'):
+        with patch.object(athlete_service, '_search_by_name_in_group', return_value=name_result), \
+             patch.object(athlete_service, '_get_remaining_group_names', return_value=["Another Group"]), \
+             patch.object(athlete_service, '_navigate_to_group', return_value=True), \
+             patch.object(athlete_service, '_search_by_username_in_group', side_effect=username_search_side_effect):
             
-            result = athlete_service.find_athlete_by_username("testuser")
+            result = athlete_service.find_athlete_by_username(
+                "testuser", expected_name="Test Name"
+            )
         
         assert result["found"] is True
         assert result["full_name"] == "Test User Found"
-        assert result["tiles_checked"] == 8  # 5 + 3
     
-    def test_find_athlete_by_username_returns_not_found_after_all_groups(self, athlete_service):
+    def test_find_athlete_by_username_returns_not_found_after_both_passes(self, athlete_service):
         """Verifica que retorna not found despues de buscar en todos los grupos."""
-        not_found_result = {
-            "found": False,
-            "username": "nonexistent",
-            "full_name": "",
-            "group": "",
-            "tiles_checked": 2
+        name_result = {
+            "found": False, "username": "nonexistent",
+            "full_name": "", "group": "", "tiles_checked": 0
         }
         
-        groups = [
-            {"name": "My Athletes", "value": "1", "selected": True},
-            {"name": "Group B", "value": "2", "selected": False}
-        ]
+        def username_search_not_found(username, group_name, result, timeout=10):
+            result["tiles_checked"] += 2
+            return result
         
-        with patch.object(athlete_service, '_search_in_current_group', return_value=not_found_result), \
-             patch.object(athlete_service, 'get_available_groups', return_value=groups), \
-             patch.object(athlete_service, 'select_group', return_value=True), \
-             patch('time.sleep'):
+        with patch.object(athlete_service, '_search_by_name_in_group', return_value=name_result), \
+             patch.object(athlete_service, '_get_remaining_group_names', return_value=["Group B"]), \
+             patch.object(athlete_service, '_navigate_to_group', return_value=True), \
+             patch.object(athlete_service, '_search_by_username_in_group', side_effect=username_search_not_found):
             
-            result = athlete_service.find_athlete_by_username("nonexistent")
+            result = athlete_service.find_athlete_by_username(
+                "nonexistent", expected_name="Nobody"
+            )
         
         assert result["found"] is False
 
@@ -467,7 +527,7 @@ class TestAthleteServiceNameMatching:
 
 
 class TestAthleteServiceOptimizedSearch:
-    """Tests para busqueda optimizada con expected_name."""
+    """Tests para busqueda optimizada con expected_name via _search_by_name_in_group."""
     
     @pytest.fixture
     def mock_driver(self):
@@ -484,8 +544,8 @@ class TestAthleteServiceOptimizedSearch:
         """Crea una instancia de AthleteService con mocks."""
         return AthleteService(mock_driver, mock_wait)
     
-    def test_search_with_expected_name_finds_quickly(self, athlete_service):
-        """Verifica que la busqueda optimizada encuentra al atleta rapidamente."""
+    def test_search_by_name_finds_quickly(self, athlete_service):
+        """Verifica que la busqueda por nombre encuentra al atleta rapidamente."""
         mock_tile = Mock()
         
         with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
@@ -496,7 +556,7 @@ class TestAthleteServiceOptimizedSearch:
              patch.object(athlete_service, 'get_full_name_from_modal', return_value="Luis Alberto Perez"), \
              patch.object(athlete_service, 'close_settings_modal', return_value=True):
             
-            result = athlete_service._search_in_current_group(
+            result = athlete_service._search_by_name_in_group(
                 username="luisperez123",
                 group_name="My Athletes",
                 expected_name="Luis Aragon"
@@ -506,30 +566,28 @@ class TestAthleteServiceOptimizedSearch:
         assert result["full_name"] == "Luis Alberto Perez"
         assert result["tiles_checked"] == 1
     
-    def test_search_with_expected_name_skips_group_when_no_candidates(self, athlete_service):
+    def test_search_by_name_skips_group_when_no_candidates(self, athlete_service):
         """Verifica que salta el grupo si no hay candidatos por nombre."""
         mock_tile = Mock()
         
         with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
-             patch.object(athlete_service, '_filter_tiles_by_name', return_value=[]):  # No candidatos
+             patch.object(athlete_service, '_filter_tiles_by_name', return_value=[]):
             
-            result = athlete_service._search_in_current_group(
+            result = athlete_service._search_by_name_in_group(
                 username="luisperez123",
                 group_name="My Athletes",
                 expected_name="Luis Aragon"
             )
         
-        # No debe encontrar y no debe verificar ningun tile
         assert result["found"] is False
         assert result["tiles_checked"] == 0
     
-    def test_search_with_expected_name_checks_only_candidates(self, athlete_service):
+    def test_search_by_name_checks_only_candidates(self, athlete_service):
         """Verifica que solo verifica los candidatos filtrados."""
         mock_tile1 = Mock()
         mock_tile2 = Mock()
         mock_tile3 = Mock()
         
-        # Solo el tile2 es candidato por nombre
         candidates = [(mock_tile2, "Luis Garcia")]
         
         with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile1, mock_tile2, mock_tile3]), \
@@ -540,18 +598,17 @@ class TestAthleteServiceOptimizedSearch:
              patch.object(athlete_service, 'get_full_name_from_modal', return_value="Luis Garcia"), \
              patch.object(athlete_service, 'close_settings_modal', return_value=True):
             
-            result = athlete_service._search_in_current_group(
+            result = athlete_service._search_by_name_in_group(
                 username="luisgarcia",
                 group_name="My Athletes",
                 expected_name="Luis Aragon"
             )
         
-        # Debe encontrar y solo verificar 1 tile (el candidato)
         assert result["found"] is True
         assert result["tiles_checked"] == 1
     
-    def test_find_athlete_passes_expected_name_to_search(self, athlete_service):
-        """Verifica que find_athlete_by_username pasa expected_name a _search_in_current_group."""
+    def test_find_athlete_passes_expected_name_to_name_search(self, athlete_service):
+        """Verifica que find_athlete_by_username pasa expected_name a _search_by_name_in_group."""
         expected_result = {
             "found": True,
             "username": "testuser",
@@ -560,16 +617,17 @@ class TestAthleteServiceOptimizedSearch:
             "tiles_checked": 1
         }
         
-        with patch.object(athlete_service, '_search_in_current_group', return_value=expected_result) as mock_search:
+        with patch.object(athlete_service, '_search_by_name_in_group', return_value=expected_result) as mock_search:
             result = athlete_service.find_athlete_by_username(
                 username="testuser",
                 expected_name="Test Name"
             )
         
-        # Verificar que se llamo con expected_name
+        # Verificar que _search_by_name_in_group se llamo con expected_name
         mock_search.assert_called_once()
-        call_kwargs = mock_search.call_args[1]
-        assert call_kwargs["expected_name"] == "Test Name"
+        call_kwargs = mock_search.call_args
+        # Could be positional or keyword — check expected_name is "Test Name"
+        assert "Test Name" in call_kwargs.args or call_kwargs.kwargs.get("expected_name") == "Test Name"
         assert result["found"] is True
 
 

@@ -2,7 +2,7 @@
 Endpoints para sincronización del historial de entrenamientos (TrainingPeaks).
 
 Este flujo es separado del chat y está orientado a:
-- extraer historial completo (o lo más completo posible) vía Selenium/MCP
+- extraer historial completo (o lo más completo posible) vía Selenium
 - persistirlo en la base de datos como JSON (AthleteModel.performance.training_history)
 """
 

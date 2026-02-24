@@ -1,7 +1,7 @@
 """
 Endpoints para operaciones con sesiones de entrenamiento.
 Maneja la creacion, consulta y cierre de sesiones con drivers de Selenium.
-Incluye inicializacion automatica del MCP y agente de chat.
+Incluye inicializacion automatica del agente de chat.
 """
 from typing import Optional
 
@@ -25,7 +25,6 @@ from app.infrastructure.repositories.athlete_repository import AthleteRepository
 from app.infrastructure.autogen.chat_manager import ChatManager
 from app.infrastructure.driver.driver_manager import DriverManager
 from app.infrastructure.driver.selenium_executor import run_selenium
-from app.infrastructure.mcp.mcp_server_manager import MCPServerManager
 from app.shared.utils.audit_logger import AuditLogger
 
 
@@ -49,9 +48,8 @@ async def start_session(
     El flujo completo incluye:
     1. Validacion del atleta
     2. Inicializacion del driver de Selenium (login, seleccion atleta, etc.)
-    3. Inicializacion del MCP con el driver para herramientas de TrainingPeaks
-    4. Creacion del agente de chat asociado a la sesion
-    5. Persistencia de la sesion de chat en base de datos
+    3. Creacion del agente de chat asociado a la sesion
+    4. Persistencia de la sesion de chat en base de datos
     
     Args:
         dto: Datos de inicio con el nombre del atleta
@@ -59,7 +57,7 @@ async def start_session(
         db: Sesion de base de datos (inyectado)
         
     Returns:
-        SessionResponseDTO: Informacion de la sesion iniciada con MCP y chat activos
+        SessionResponseDTO: Informacion de la sesion iniciada con chat activo
         
     Raises:
         400: Si el atleta no es valido
@@ -90,42 +88,7 @@ async def start_session(
         }
     )
     
-    # 2. Obtener la sesion del driver para inicializar el servidor MCP
-    driver_session = DriverManager.get_session(session_response.session_id)
-    
-    # 3. Inicializar servidor MCP con el driver de la sesion
-    # El servidor MCP se ejecuta en el mismo proceso con el driver inyectado
-    mcp_initialized = False
-    if driver_session:
-        mcp_initialized = MCPServerManager.start(
-            driver=driver_session.driver,
-            wait=driver_session.wait,
-            session_id=session_response.session_id,
-            run_server=False  # Las herramientas se llaman directamente via MCPToolsAdapter
-        )
-        
-        # Log de la inicializacion del servidor MCP
-        AuditLogger.log_mcp_call(
-            session_id=session_response.session_id,
-            action="MCP_SERVER_START",
-            details={
-                "driver_available": True,
-                "tools_available": MCPServerManager.get_available_tools()
-            },
-            success=mcp_initialized
-        )
-        
-        if mcp_initialized:
-            logger.info(
-                f"Servidor MCP iniciado para sesion {session_response.session_id}. "
-                f"Herramientas disponibles: {len(MCPServerManager.get_available_tools())}"
-            )
-        else:
-            logger.warning(
-                f"Servidor MCP no se pudo iniciar para sesion {session_response.session_id}"
-            )
-    
-    # 4. Inicializar agente de chat para esta sesion
+    # 2. Inicializar agente de chat para esta sesion
     chat_repo = ChatRepository(db)
     
     # Crear registro de chat en base de datos
@@ -134,10 +97,10 @@ async def start_session(
         athlete_name=session_response.athlete_name,
         athlete_id=session_response.athlete_id,
         system_message=None,  # Usara el default del ChatManager
-        agent_config={"mcp_enabled": mcp_initialized}
+        agent_config={}
     )
     
-    # 5. Crear agente en memoria con contexto del atleta
+    # 3. Crear agente en memoria con contexto del atleta
     ChatManager.create_agent(
         session_id=session_response.session_id,
         athlete_name=session_response.athlete_name,
@@ -148,14 +111,12 @@ async def start_session(
     AuditLogger.log_event(
         session_id=session_response.session_id,
         event="CHAT_AGENT_CREATED",
-        details={"mcp_enabled": mcp_initialized}
+        details={}
     )
     
     # Construir mensaje de respuesta
-    mcp_status = "MCP activo" if mcp_initialized else "MCP no disponible"
     session_response.message = (
         f"Sesion iniciada para {dto.athlete_name}. "
-        f"{mcp_status}. "
         f"Chat: /api/v1/sessions/{session_response.session_id}/chat/"
     )
     
@@ -202,7 +163,6 @@ async def close_session(
     Cierra una sesion y libera sus recursos.
     
     Incluye:
-    - Limpieza del MCP si esta conectado a esta sesion
     - Cierre del ChromeDriver
     - Desactivacion de la sesion de chat
     - Eliminacion del agente de memoria
@@ -226,18 +186,6 @@ async def close_session(
         details={"reason": "user_request"}
     )
     
-    # Detener servidor MCP si esta conectado a esta sesion
-    current_mcp_session = MCPServerManager.get_current_session_id()
-    mcp_stopped = False
-    if current_mcp_session == session_id:
-        mcp_stopped = MCPServerManager.stop()
-    
-    AuditLogger.log_mcp_call(
-        session_id=session_id,
-        action="MCP_SERVER_STOP",
-        success=mcp_stopped
-    )
-    
     # Cerrar driver de Selenium
     use_cases.close_session(session_id)
     
@@ -252,36 +200,6 @@ async def close_session(
     AuditLogger.close_session(session_id)
 
 
-@router.get(
-    "/{session_id}/mcp-status",
-    summary="Obtener estado del servidor MCP"
-)
-def get_mcp_status(session_id: str) -> dict:
-    """
-    Obtiene el estado del servidor MCP para una sesion.
-    
-    Verifica si el servidor MCP esta inicializado y las herramientas disponibles.
-    
-    Args:
-        session_id: ID de la sesion
-        
-    Returns:
-        Dict con el estado del servidor MCP
-    """
-    mcp_status = MCPServerManager.get_status()
-    
-    # Verificar si esta sesion es la conectada al servidor MCP
-    is_current_session = mcp_status.get("session_id") == session_id
-    
-    return {
-        "session_id": session_id,
-        "mcp_connected_to_session": is_current_session,
-        "mcp_initialized": mcp_status.get("initialized", False),
-        "mcp_server_running": mcp_status.get("server_running", False),
-        "tools_available": mcp_status.get("tools_count", 0),
-        "mcp_path_exists": mcp_status.get("mcp_path_exists", False)
-    }
-
 @router.post(
     "/{session_id}/restart",
     response_model=SessionResponseDTO,
@@ -295,8 +213,6 @@ async def restart_session(
 ) -> SessionResponseDTO:
     """
     Reinicia el driver de Selenium para una sesion existente.
-    
-    Tambien reinicializa el servidor MCP y el agente si es necesario.
     
     Args:
         session_id: ID de la sesion a reiniciar
@@ -316,36 +232,10 @@ async def restart_session(
         details={"driver_active": True}
     )
     
-    # 3. Inicializar servidor MCP
-    driver_session = DriverManager.get_session(session_id)
-    mcp_initialized = False
-    
-    if driver_session:
-        # Detener servidor anterior si existia
-        if MCPServerManager.get_current_session_id() == session_id:
-            MCPServerManager.stop()
-            
-        # Iniciar nuevo servidor MCP
-        mcp_initialized = MCPServerManager.start(
-            driver=driver_session.driver,
-            wait=driver_session.wait,
-            session_id=session_id,
-            run_server=False
-        )
-        
-        if mcp_initialized:
-            logger.info(f"Servidor MCP reinicializado para sesion {session_id}")
-            AuditLogger.log_mcp_call(
-                session_id=session_id,
-                action="MCP_SERVER_RESTART",
-                details={"tools_available": MCPServerManager.get_available_tools()},
-                success=True
-            )
-    
-    # 4. Asegurar que el agente este listo (recargar si es necesario)
+    # 3. Asegurar que el agente este listo (recargar si es necesario)
     # ChatManager.get_agent(session_id) validara o recreara el agente si no existe
     
-    session_response.message = f"Sesion reiniciada correctamente. MCP: {'Activo' if mcp_initialized else 'Inactivo'}"
+    session_response.message = "Sesion reiniciada correctamente."
     
     return session_response
 

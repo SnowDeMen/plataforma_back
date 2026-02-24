@@ -22,9 +22,9 @@ from pathlib import Path
 api_path = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(api_path))
 
-# Agregar path para domain (funciones de calendario)
-mcp_path = api_path.parent.parent / "mcp"
-sys.path.insert(0, str(mcp_path))
+# Agregar path para domain (funciones de calendario) - ahora en tp_domain
+tp_domain_path = api_path / "app" / "infrastructure" / "trainingpeaks"
+sys.path.insert(0, str(tp_domain_path))
 
 from app.infrastructure.driver.driver_manager import DriverManager, TRAININGPEAKS_URL
 from app.infrastructure.driver.selenium_executor import run_selenium, get_executor_stats
