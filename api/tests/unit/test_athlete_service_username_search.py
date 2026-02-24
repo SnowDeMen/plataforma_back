@@ -173,6 +173,13 @@ class TestAthleteServiceUsernameSearch:
     def test_search_by_name_finds_matching_username(self, athlete_service):
         """Verifica que encuentra el atleta correcto por username."""
         mock_tile = Mock()
+        initial_result = {
+            "found": False,
+            "username": "juanperez123",
+            "full_name": "",
+            "group": "My Athletes",
+            "tiles_checked": 0
+        }
         
         with patch.object(athlete_service, 'get_athlete_tiles', return_value=[mock_tile]), \
              patch.object(athlete_service, '_filter_tiles_by_name', return_value=[(mock_tile, "Juan Perez")]), \
@@ -581,6 +588,7 @@ class TestAthleteServiceOptimizedSearch:
         
         assert result["found"] is False
         assert result["tiles_checked"] == 0
+        assert result["group"] == "My Athletes"
     
     def test_search_by_name_checks_only_candidates(self, athlete_service):
         """Verifica que solo verifica los candidatos filtrados."""

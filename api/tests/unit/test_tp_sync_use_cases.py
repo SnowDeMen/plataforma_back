@@ -316,7 +316,7 @@ class TestTPSyncUseCases:
         
         job = TPSyncUseCases._jobs[job_id]
         assert job.status == "failed"
-        assert "no encontrado" in job.error.lower()
+        assert "no se encontro" in job.error.lower()
     
     @pytest.mark.asyncio
     async def test_run_job_handles_selenium_exception(self, use_cases):
@@ -352,11 +352,28 @@ class TestTPSyncUseCases:
              patch('app.application.use_cases.tp_sync_use_cases.run_selenium', new_callable=AsyncMock) as mock_run_selenium:
             mock_run_selenium.side_effect = Exception("Selenium timeout")
             
-            await use_cases._run_job(
-                job_id=job_id,
-                username="test_user",
-                athlete_id="rec123"
-            )
+            # Mock de la sesion para evitar problemas de loop
+            mock_session = AsyncMock()
+            mock_session_local.return_value.__aenter__.return_value = mock_session
+            
+            # Simular que el atleta existe para que no falle antes de Selenium
+            mock_athlete = MagicMock()
+            mock_athlete.tp_name = "Test TP User"
+            mock_athlete.name = "Test User"
+            mock_athlete.full_name = "Test User Full"
+            
+            with patch('app.application.use_cases.tp_sync_use_cases.AthleteRepository') as mock_repo_class:
+                mock_repo = MagicMock()
+                mock_repo.get_by_id = AsyncMock(return_value=mock_athlete)
+                mock_repo_class.return_value = mock_repo
+                
+                mock_run_selenium.side_effect = Exception("Selenium timeout")
+                
+                await use_cases._run_job(
+                    job_id=job_id,
+                    username="test_user",
+                    athlete_id="rec123"
+                )
         
         job = TPSyncUseCases._jobs[job_id]
         assert job.status == "failed"

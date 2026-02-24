@@ -31,6 +31,7 @@ from app.infrastructure.database.models import (
     TrainingModel,
     AthleteModel,
     TrainingPlanModel,
+    SystemSettingsModel,
 )
 
 # Alembic Config object

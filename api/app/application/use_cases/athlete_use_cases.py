@@ -58,10 +58,12 @@ class AthleteUseCases:
 
     async def list_athletes(
         self,
-        status: Optional[str] = None,
+        training_status: Optional[str] = None,
+        client_status: Optional[str] = None,
         discipline: Optional[str] = None,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
+        include_inactive: bool = False
     ) -> List[AthleteListItemDTO]:
         """
         Lista atletas con filtros opcionales.
@@ -75,8 +77,18 @@ class AthleteUseCases:
         Returns:
             Lista de AthleteListItemDTO
         """
+        # Si no se pide incluir inactivos, filtramos por defecto a ['activo', 'prueba']
+        allowed_statuses = None
+        if not include_inactive:
+            allowed_statuses = ["activo", "prueba"]
+            if client_status and client_status.lower() not in allowed_statuses:
+                # Si se pide un status específico que no está en los permitidos, devolvemos vacío
+                return []
+            
         athletes = await self.repository.get_all(
-            status=status,
+            training_status=training_status,
+            client_status=client_status,
+            client_statuses=allowed_statuses,
             discipline=discipline,
             limit=limit,
             offset=offset
@@ -90,7 +102,8 @@ class AthleteUseCases:
                 age=a.age,
                 discipline=a.discipline,
                 level=a.level,
-                status=a.status,
+                training_status=a.training_status,
+                client_status=a.client_status,
                 goal=a.goal
             )
             for a in athletes
@@ -175,7 +188,8 @@ class AthleteUseCases:
             discipline=discipline,
             level=athlete.level,
             goal=goal,
-            status=athlete.status,
+            training_status=athlete.training_status,
+            client_status=athlete.client_status,
             experience=athlete.experience,
             tp_username=athlete.tp_username,
             tp_name=athlete.tp_name,
@@ -264,7 +278,7 @@ class AthleteUseCases:
 
     async def update_status(self, athlete_id: str, dto: AthleteStatusUpdateDTO) -> AthleteDTO:
         """
-        Actualiza solo el status de un atleta.
+        Actualiza solo el training_status de un atleta.
         
         Args:
             athlete_id: ID del atleta
@@ -276,14 +290,14 @@ class AthleteUseCases:
         Raises:
             AthleteNotFoundException: Si el atleta no existe
         """
-        success = await self.repository.update_status(athlete_id, dto.status)
+        success = await self.repository.update_status(athlete_id, dto.training_status)
         
         if not success:
             raise AthleteNotFoundException(athlete_id)
         
         await self.db.commit()
         
-        logger.info(f"Status del atleta {athlete_id} cambiado a '{dto.status}'")
+        logger.info(f"Training Status del atleta {athlete_id} cambiado a '{dto.training_status}'")
         
         return await self.get_athlete(athlete_id)
 
@@ -332,12 +346,29 @@ class AthleteUseCases:
 
     async def get_status_counts(self) -> Dict[str, int]:
         """
-        Obtiene el conteo de atletas por status.
+        Obtiene el conteo de atletas por status (solo los visibles: activo/prueba).
         
         Returns:
             Diccionario con conteos por status
         """
-        return await self.repository.get_status_counts()
+        # Para que el dashboard coincida con las cards, filtramos aquí también
+        from sqlalchemy import func, select
+        from app.infrastructure.database.models import AthleteModel
+        
+        query = (
+            select(AthleteModel.training_status, func.count(AthleteModel.id))
+            .where(func.lower(AthleteModel.client_status).in_(["activo", "prueba"]))
+            .group_by(AthleteModel.training_status)
+        )
+        
+        result = await self.db.execute(query)
+        rows = result.all()
+        
+        counts = {"Por generar": 0, "Por revisar": 0, "Plan activo": 0}
+        for status, count in rows:
+            if status in counts:
+                counts[status] = count
+        return counts
 
     async def delete_athlete(self, athlete_id: str) -> bool:
         """
