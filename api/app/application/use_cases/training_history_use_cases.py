@@ -3,7 +3,7 @@ Casos de uso para sincronizar el historial de entrenamientos desde TrainingPeaks
 
 Características clave:
 - Flujo separado del chat (endpoint dedicado).
-- Reutiliza la sesión Selenium existente (`session_id`) y el MCP.
+- Usa sesión Selenium dedicada para extracción.
 - Serializa acceso al driver por sesión mediante lock.
 - Persiste resultado como JSON dentro de `AthleteModel.performance`.
 """
@@ -11,11 +11,9 @@ Características clave:
 from __future__ import annotations
 
 import asyncio
-import sys
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Dict, Optional
 
 from loguru import logger
@@ -126,35 +124,6 @@ class TrainingHistoryUseCases:
             job.updated_at = datetime.now(timezone.utc)
 
     @staticmethod
-    def _find_mcp_domain_path() -> Path:
-        """
-        Encuentra la carpeta `plataforma_back/mcp` para poder importar `domain.*`
-        (navegación/extracción) sin depender del servidor MCP.
-        """
-        current = Path(__file__).resolve()
-        for _ in range(10):
-            current = current.parent
-            candidate = current / "plataforma_back" / "mcp"
-            if candidate.exists() and (candidate / "domain").exists():
-                return candidate
-        # Fallback: estructura esperada cuando se ejecuta dentro de plataforma_back/api
-        # (subimos hasta encontrar `mcp/` directamente)
-        current = Path(__file__).resolve()
-        for _ in range(10):
-            current = current.parent
-            candidate = current / "mcp"
-            if candidate.exists() and (candidate / "domain").exists():
-                return candidate
-        raise RuntimeError("No se encontró el path de `mcp/domain` para reutilizar funciones de calendario.")
-
-    @classmethod
-    def _ensure_domain_imports(cls) -> None:
-        mcp_path = cls._find_mcp_domain_path()
-        mcp_path_str = str(mcp_path)
-        if mcp_path_str not in sys.path:
-            sys.path.insert(0, mcp_path_str)
-
-    @staticmethod
     def _create_driver() -> tuple[webdriver.Chrome, WebDriverWait]:
         """
         Crea un driver dedicado para el job de historial.
@@ -184,7 +153,7 @@ class TrainingHistoryUseCases:
 
         Implementación:
         - Itera día a día hacia atrás.
-        - Usa `obtener_datos_calendario` (MCP) con `use_today` solo en la primera llamada
+        - Usa funciones de calendario (Selenium) con `use_today` solo en la primera llamada
           para acelerar el barrido.
         - Corta cuando hay `gap_days` sin entrenos luego de haber encontrado al menos uno.
         
@@ -192,7 +161,7 @@ class TrainingHistoryUseCases:
         para no bloquear el event loop y permitir que el healthcheck responda.
         """
         try:
-            await self._update_job(job_id, message="Preparando sesión Selenium/MCP...", progress=0, status="running")
+            await self._update_job(job_id, message="Preparando sesión Selenium...", progress=0, status="running")
             # Obtener nombre del atleta para selección en TrainingPeaks.
             async with AsyncSessionLocal() as db_lookup:
                 repo = AthleteRepository(db_lookup)
@@ -205,9 +174,8 @@ class TrainingHistoryUseCases:
 
             await self._update_job(job_id, message="Creando driver dedicado y autenticando...", progress=1)
 
-            self._ensure_domain_imports()
-            from domain.core import set_driver, clear_driver  # type: ignore
-            from domain.calendar.workout_service import get_all_quickviews_on_date  # type: ignore
+            from app.infrastructure.trainingpeaks.tp_domain.core import set_driver, clear_driver
+            from app.infrastructure.trainingpeaks.tp_domain.calendar.workout_service import get_all_quickviews_on_date
 
             driver: Optional[webdriver.Chrome] = None
             wait: Optional[WebDriverWait] = None

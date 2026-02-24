@@ -4,7 +4,6 @@ AuditLogger - Sistema de logging estructurado para debugging.
 Proporciona funciones simples para registrar logs de:
 - API: Requests y responses de endpoints
 - Session: Un archivo por sesion con detalle completo
-- MCP: Llamadas al MCP
 - Chat: Mensajes de conversacion
 """
 import json
@@ -242,51 +241,6 @@ class AuditLogger:
             session_log_func(
                 f"RESPONSE {status_code} {method} {path}\n{json.dumps(log_data, indent=2, default=str)}"
             )
-    
-    @classmethod
-    def log_mcp_call(
-        cls,
-        session_id: str,
-        action: str,
-        details: Optional[Dict] = None,
-        success: bool = True,
-        error: Optional[str] = None
-    ) -> None:
-        """
-        Registra una llamada al MCP.
-        
-        Args:
-            session_id: ID de la sesion
-            action: Accion del MCP ejecutada
-            details: Detalles adicionales
-            success: Si fue exitosa
-            error: Mensaje de error si aplico
-        """
-        if session_id not in cls._session_loggers:
-            return
-        
-        log_data = {
-            "type": "MCP_CALL",
-            "timestamp": datetime.now().strftime(cls.LOG_TIMESTAMP_FORMAT),
-            "action": action,
-            "success": success
-        }
-        
-        if details:
-            log_data["details"] = details
-        if error:
-            log_data["error"] = error
-        
-        log_level = "info" if success else "error"
-        log_func = getattr(cls._session_loggers[session_id], log_level)
-        
-        status = "OK" if success else "FAILED"
-        log_func(f"MCP {action}: {status}\n{json.dumps(log_data, indent=2, default=str)}")
-        
-        # Tambien log en API log
-        api_logger = logger.bind(context="api")
-        api_log_func = getattr(api_logger, log_level)
-        api_log_func(f"[{session_id[:8]}] MCP {action}: {status}")
     
     @classmethod
     def log_chat(

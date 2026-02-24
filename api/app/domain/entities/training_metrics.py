@@ -73,16 +73,30 @@ class ComputedMetrics:
     # Distribucion por tipo de workout
     distribution_by_type: Dict[str, float] = field(default_factory=dict)
     
+    # Alertas activas (pobladas por HistoryProcessor.process())
+    active_alerts: List = field(default_factory=list)
+    
     def to_dict(self) -> Dict[str, Any]:
         """
         Convierte las metricas a diccionario para persistencia en JSON.
         Maneja la serializacion de dates y datetimes.
         """
+        # Serializar alerts aparte para evitar problemas con Enum en asdict
+        alerts = self.active_alerts
+        self.active_alerts = []
         data = asdict(self)
+        self.active_alerts = alerts
+        
         # Convertir datetime/date a ISO strings
         data['computed_at'] = self.computed_at.isoformat()
         data['period_start'] = self.period_start.isoformat()
         data['period_end'] = self.period_end.isoformat()
+        
+        # Serializar alertas usando su propio to_dict
+        data['active_alerts'] = [
+            a.to_dict() if hasattr(a, 'to_dict') else a
+            for a in alerts
+        ]
         return data
     
     @classmethod
@@ -90,6 +104,8 @@ class ComputedMetrics:
         """
         Crea una instancia desde un diccionario (deserializacion).
         """
+        from app.domain.entities.alerts import TrainingAlert
+        
         # Parsear strings ISO a datetime/date
         if isinstance(data.get('computed_at'), str):
             data['computed_at'] = datetime.fromisoformat(data['computed_at'])
@@ -97,6 +113,13 @@ class ComputedMetrics:
             data['period_start'] = date.fromisoformat(data['period_start'])
         if isinstance(data.get('period_end'), str):
             data['period_end'] = date.fromisoformat(data['period_end'])
+        
+        # Deserializar alertas
+        raw_alerts = data.get('active_alerts', [])
+        data['active_alerts'] = [
+            TrainingAlert.from_dict(a) if isinstance(a, dict) else a
+            for a in raw_alerts
+        ]
         
         return cls(**data)
     

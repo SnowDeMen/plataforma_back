@@ -20,6 +20,9 @@ class TestTPSyncUseCases:
         """Crea una instancia limpia de TPSyncUseCases para cada test."""
         # Limpiar jobs de tests anteriores
         TPSyncUseCases._jobs = {}
+        # Recrear the lock in the current event loop to avoid
+        # "attached to a different loop" errors in pytest-asyncio
+        TPSyncUseCases._jobs_lock = asyncio.Lock()
         return TPSyncUseCases()
     
     # =========================================================================
@@ -331,8 +334,23 @@ class TestTPSyncUseCases:
             updated_at=now,
         )
         
-        with patch('app.application.use_cases.tp_sync_use_cases.run_selenium', new_callable=AsyncMock) as mock_run_selenium, \
-             patch('app.application.use_cases.tp_sync_use_cases.AsyncSessionLocal') as mock_session_local:
+        # Mock AsyncSessionLocal so step 0 (DB lookup) succeeds
+        mock_athlete = Mock()
+        mock_athlete.tp_name = None
+        mock_athlete.name = "Test User"
+        
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id.return_value = mock_athlete
+        
+        mock_db = AsyncMock()
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__.return_value = mock_db
+        mock_session_ctx.__aexit__.return_value = False
+        
+        with patch('app.application.use_cases.tp_sync_use_cases.AsyncSessionLocal', return_value=mock_session_ctx), \
+             patch('app.application.use_cases.tp_sync_use_cases.AthleteRepository', return_value=mock_repo), \
+             patch('app.application.use_cases.tp_sync_use_cases.run_selenium', new_callable=AsyncMock) as mock_run_selenium:
+            mock_run_selenium.side_effect = Exception("Selenium timeout")
             
             # Mock de la sesion para evitar problemas de loop
             mock_session = AsyncMock()

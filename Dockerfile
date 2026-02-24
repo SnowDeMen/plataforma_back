@@ -1,4 +1,4 @@
-# Dockerfile para el backend completo (API + MCP)
+# Dockerfile para el backend (API + Selenium)
 # Incluye Chrome y ChromeDriver para automatizacion de TrainingPeaks
 
 FROM python:3.11-slim
@@ -47,15 +47,10 @@ WORKDIR /app
 
 # Copiar requirements e instalar dependencias Python
 COPY api/requirements.txt ./api_requirements.txt
-COPY mcp/requirements.txt ./mcp_requirements.txt
-RUN pip install --no-cache-dir -r api_requirements.txt \
-    && pip install --no-cache-dir -r mcp_requirements.txt
+RUN pip install --no-cache-dir -r api_requirements.txt
 
 # Copiar el codigo de la API
 COPY api/ ./
-
-# Copiar el modulo MCP
-COPY mcp/ ./mcp/
 
 # Crear directorios necesarios
 RUN mkdir -p logs/api_logs logs/session_logs workouts

@@ -79,7 +79,7 @@ def ensure_driver():
     if _driver is None:
         raise RuntimeError(
             "No hay driver configurado. Usa set_driver() para inyectar "
-            "un driver de Selenium antes de usar las funciones del MCP."
+            "un driver de Selenium antes de usar las funciones de TrainingPeaks."
         )
     
     # Verificar que el driver sigue siendo válido

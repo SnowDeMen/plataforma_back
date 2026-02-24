@@ -178,7 +178,7 @@ class PlanApplyRequestDTO(BaseModel):
 
     Importante:
     - El frontend envía el JSON de workouts (derivado del plan) para que el backend
-      ejecute un flujo determinístico (Selenium directo, sin MCP).
+      ejecute un flujo determinístico (Selenium directo).
     - El backend puede usar `plan.start_date` para completar fechas faltantes si aplica.
     """
 

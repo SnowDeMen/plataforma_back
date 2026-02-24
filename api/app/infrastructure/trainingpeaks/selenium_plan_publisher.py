@@ -1,25 +1,19 @@
 """
-Publicador de planes a TrainingPeaks usando Selenium directo (sin MCP).
+Publicador de planes a TrainingPeaks usando Selenium directo.
 
 Diseño:
 - Usa `DriverManager.initialize_training_session(...)` para crear una sesión efímera:
   login con cookies + selección de atleta + Workout Library abierta.
-- Reutiliza funciones robustas ya existentes en `plataforma_back/mcp/domain/*`:
+- Reutiliza funciones de dominio en `infrastructure/trainingpeaks/tp_domain/*`:
   - crear workout en Workout Library
   - drag & drop al calendario
-
-Nota importante:
-- Aunque reutilizamos módulos ubicados bajo `mcp/domain`, NO iniciamos MCP ni usamos herramientas MCP.
-  Solo aprovechamos utilidades de Selenium ya probadas.
 """
 
 from __future__ import annotations
 
-import sys
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from typing import Optional, Sequence
 
 from loguru import logger
@@ -141,35 +135,6 @@ def _normalize_for_publish(
     )
 
 
-def _find_mcp_domain_path() -> Path:
-    """
-    Busca el path del módulo que contiene `domain/*` (ubicado dentro de carpeta `mcp/`).
-
-    Lo hacemos de forma robusta para que funcione en desarrollo y Docker,
-    sin depender del arranque de MCP.
-    """
-    current = Path(__file__).resolve()
-    for _ in range(8):
-        current = current.parent
-        mcp_candidate = current / "mcp"
-        if mcp_candidate.exists() and (mcp_candidate / "trainingpeaks_mcp_server_modular.py").exists():
-            return mcp_candidate
-    docker_path = Path("/app/mcp")
-    if docker_path.exists():
-        return docker_path
-    raise FileNotFoundError("No se pudo localizar el módulo 'mcp/' para importar 'domain.*'")
-
-
-def _ensure_domain_imports_available() -> None:
-    """
-    Asegura que `domain.*` sea importable agregando `mcp/` al sys.path.
-    """
-    mcp_path = _find_mcp_domain_path()
-    mcp_path_str = str(mcp_path)
-    if mcp_path_str not in sys.path:
-        sys.path.insert(0, mcp_path_str)
-
-
 class SeleniumTrainingPeaksPlanPublisher(TrainingPeaksPlanPublisher):
     """
     Implementación real (Selenium) para publicar un plan en TrainingPeaks.
@@ -192,24 +157,19 @@ class SeleniumTrainingPeaksPlanPublisher(TrainingPeaksPlanPublisher):
         if publishable_count <= 0:
             raise ValueError("Todos los workouts recibidos son de descanso (no hay nada que aplicar)")
 
-        _ensure_domain_imports_available()
-
-        # Imports tardíos: evitamos acoplar el import al arranque del servicio.
-        from domain.core import set_driver  # type: ignore
-        from domain.workout_library.creation_service import create_workout  # type: ignore
-        from domain.calendar.date_service import (  # type: ignore
+        from app.infrastructure.trainingpeaks.tp_domain.core import set_driver
+        from app.infrastructure.trainingpeaks.tp_domain.workout_library.creation_service import create_workout
+        from app.infrastructure.trainingpeaks.tp_domain.calendar.date_service import (
             drag_workout_to_calendar,
             _ensure_workout_library_folder_open,
         )
-        # Imports directos para eliminación (evitamos manage_workout que no pasa folder/exact)
-        from domain.workout_library.workout_service import (  # type: ignore
+        from app.infrastructure.trainingpeaks.tp_domain.workout_library.workout_service import (
             click_workout,
             click_selected_workout_tomahawk_button,
             click_delete_workout_button,
             click_delete_workout_confirm_button,
         )
-        # Import para ocultar workouts fuera de las primeras 2 semanas
-        from domain.calendar.workout_service import hide_calendar_workout  # type: ignore
+        from app.infrastructure.trainingpeaks.tp_domain.calendar.workout_service import hide_calendar_workout
 
         driver_session: Optional[DriverSession] = None
         skipped_rest = 0
@@ -373,10 +333,9 @@ class SeleniumTrainingPeaksPlanPublisher(TrainingPeaksPlanPublisher):
             raise
 
         finally:
-            # Desconectar el módulo `domain.core` del driver, aunque el driver lo cierre DriverManager.
+            # Desconectar el módulo tp_domain.core del driver, aunque el driver lo cierre DriverManager.
             try:
-                _ensure_domain_imports_available()
-                from domain.core import clear_driver  # type: ignore
+                from app.infrastructure.trainingpeaks.tp_domain.core import clear_driver
                 clear_driver()
             except Exception:
                 pass

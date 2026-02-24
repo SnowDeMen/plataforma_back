@@ -10,7 +10,6 @@ from app.core.config import settings
 from app.infrastructure.database.session import init_db, close_db
 from app.infrastructure.driver.driver_manager import DriverManager
 from app.infrastructure.autogen.chat_manager import ChatManager
-from app.infrastructure.mcp.mcp_server_manager import MCPServerManager
 from app.shared.utils.audit_logger import AuditLogger
 from app.infrastructure.external.airtable_sync.sync_service import build_from_env
 from app.infrastructure.external.airtable_sync.table_mappings import get_table_sync_config
@@ -286,10 +285,6 @@ def shutdown_handler(app: FastAPI) -> Callable:
         if hasattr(app.state, "scheduler"):
             app.state.scheduler.shutdown()
             logger.info("Programador de tareas detenido")
-        
-        # Detener servidor MCP
-        MCPServerManager.stop()
-        logger.info("Servidor MCP detenido")
         
         # Cerrar todas las sesiones de driver de Selenium
         closed_sessions = DriverManager.close_all_sessions()

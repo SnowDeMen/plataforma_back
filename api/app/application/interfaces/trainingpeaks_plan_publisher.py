@@ -33,7 +33,7 @@ class TrainingPeaksPlanPublisher(Protocol):
     Publica workouts de un plan hacia TrainingPeaks.
 
     Implementaciones:
-    - Selenium directo (sin MCP).
+    - Selenium directo.
     - Fake/stub para tests.
     """
 
