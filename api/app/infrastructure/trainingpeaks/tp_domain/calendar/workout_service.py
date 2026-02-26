@@ -645,7 +645,65 @@ def get_calendar_quickview_data(timeout=20):
         pass
 
     # -------------------------------------------------------------------------
-    # 9) Tabs / estados (Summary, Map and Graph, etc.)
+    # 9) Esfuerzo percibido / RPE (solo workouts completados)
+    # -------------------------------------------------------------------------
+    # NOTA: La extracción principal de RPE/feel ocurre a nivel de CARD en
+    # get_all_quickviews_on_date() via _extract_rpe_from_card(), que lee
+    # span.rpEffortRating y div.rpeEmojiIcon directamente de la tarjeta del
+    # workout. Esa extracción es per-workout confiable.
+    #
+    # Este bloque es un fallback ligero: intenta leer .rpeText/.feelText
+    # dentro del QV, pero estos elementos NO siempre se renderizan dentro
+    # de #quickViewContent (posible React portal). El resultado puede ser
+    # stale si se reutiliza el mismo componente MUI para todos los workouts.
+    # Cuando get_all_quickviews_on_date() obtiene datos de la card, sobreescribe
+    # este valor con data["perceived_exertion"] = card_rpe.
+    _FEEL_LABEL_TO_VALUE = {
+        "very weak": 1,
+        "weak": 2,
+        "normal": 3,
+        "strong": 4,
+        "very strong": 5,
+    }
+
+    perceived_exertion = {}
+
+    rpe_value = None
+    feel_value = None
+    feel_label = None
+
+    # Intentar solo dentro de #quickViewContent (scoped, no page-wide).
+    rpe_feel_data = _safe(lambda: driver.execute_script("""
+        var qv = arguments[0];
+        var r = qv.querySelector('.rpeText');
+        var f = qv.querySelector('.feelText');
+        return {
+            rpe: r ? r.textContent.trim() : null,
+            feel: f ? f.textContent.trim() : null
+        };
+    """, qv_root))
+
+    if rpe_feel_data:
+        rpe_raw = rpe_feel_data.get("rpe")
+        if rpe_raw:
+            try:
+                rpe_value = int(rpe_raw)
+            except (ValueError, TypeError):
+                pass
+
+        feel_label = rpe_feel_data.get("feel")
+        if feel_label:
+            feel_value = _FEEL_LABEL_TO_VALUE.get(feel_label.strip().lower())
+
+    if rpe_value is not None or feel_value is not None:
+        perceived_exertion = {
+            "feel_value": feel_value,   # 1-5 int or None
+            "feel_label": feel_label,   # e.g. "Very Strong" or None
+            "rpe_value": rpe_value,     # 0-10 int or None
+        }
+
+    # -------------------------------------------------------------------------
+    # 10) Tabs / estados (Summary, Map and Graph, etc.)
     # -------------------------------------------------------------------------
     tabs_info = []
     try:
@@ -670,11 +728,86 @@ def get_calendar_quickview_data(timeout=20):
         "equipment": equipment,
         "comments": comments,
         "workout_details": workout_details,
+        "perceived_exertion": perceived_exertion,
         "tabs": tabs_info,
     }
 
     print("Datos de Quick View del calendario extraídos ✅")
     return result
+
+
+# =============== Card-level RPE/feel extraction ===============
+
+# Mapping from rpeEmojiIcon CSS classes to feel values (1-5).
+# TrainingPeaks renders a div.rpeEmojiIcon on each calendar card with a class
+# that corresponds to the athlete's "How did you feel?" answer.
+_EMOJI_CLASS_TO_FEEL = {
+    "terrible":   1,   # Very Weak
+    "frown":      2,   # Weak
+    "normal":     3,   # Normal
+    "good":       4,   # Strong
+    "strong":     5,   # Very Strong
+}
+
+_FEEL_VALUE_TO_LABEL = {
+    1: "Very Weak",
+    2: "Weak",
+    3: "Normal",
+    4: "Strong",
+    5: "Very Strong",
+}
+
+
+def _extract_rpe_from_card(card) -> dict:
+    """
+    Extract RPE and feel data directly from a calendar workout card element.
+
+    Each completed workout card may contain:
+      - <span class="rpEffortRating">  -> RPE numeric value (0-10)
+      - <div class="rpeEmojiIcon ..."> -> feel via CSS class (terrible/frown/normal/good/strong)
+
+    Returns a dict compatible with perceived_exertion format:
+        {"feel_value": int|None, "feel_label": str|None, "rpe_value": int|None}
+    Returns empty dict if no data found.
+    """
+    rpe_value = None
+    feel_value = None
+    feel_label = None
+
+    # --- RPE number from <span class="rpEffortRating"> ---
+    try:
+        rpe_el = card.find_element(By.CSS_SELECTOR, "span.rpEffortRating")
+        rpe_text = (rpe_el.text or "").strip()
+        if rpe_text:
+            rpe_value = int(rpe_text)
+            if not (0 <= rpe_value <= 10):
+                rpe_value = None
+    except (NoSuchElementException, ValueError, TypeError):
+        pass
+    except Exception:
+        pass
+
+    # --- Feel from <div class="rpeEmojiIcon ..."> CSS classes ---
+    try:
+        emoji_el = card.find_element(By.CSS_SELECTOR, "div.rpeEmojiIcon")
+        classes = (emoji_el.get_attribute("class") or "").lower().split()
+        for cls, val in _EMOJI_CLASS_TO_FEEL.items():
+            if cls in classes:
+                feel_value = val
+                feel_label = _FEEL_VALUE_TO_LABEL.get(val)
+                break
+    except (NoSuchElementException, StaleElementReferenceException):
+        pass
+    except Exception:
+        pass
+
+    if rpe_value is not None or feel_value is not None:
+        return {
+            "feel_value": feel_value,
+            "feel_label": feel_label,
+            "rpe_value": rpe_value,
+        }
+    return {}
 
 
 def get_all_quickviews_on_date(target_date, use_today=True, timeout=12, limit=None):
@@ -724,6 +857,10 @@ def get_all_quickviews_on_date(target_date, use_today=True, timeout=12, limit=No
             expected_title = (ttl.text or "").strip() or None
         except Exception:
             pass
+
+        # 4.5) Extraer RPE/feel desde la card ANTES de abrir el QV
+        #       (el card element está intacto en el DOM en este punto)
+        card_rpe = _extract_rpe_from_card(card)
 
         # 5) Abrir quickview (click simple sobre target estable)
         try:
@@ -786,6 +923,12 @@ def get_all_quickviews_on_date(target_date, use_today=True, timeout=12, limit=No
             })
         except Exception:
             pass
+
+        # 8.5) Override perceived_exertion with card-level data if available.
+        #       Card-level extraction is per-workout accurate, while QV-based
+        #       extraction (section 9) may return stale/shared page-level values.
+        if card_rpe and data is not None:
+            data["perceived_exertion"] = card_rpe
 
         if data is not None:
             results.append(data)

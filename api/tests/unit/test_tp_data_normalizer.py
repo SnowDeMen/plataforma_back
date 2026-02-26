@@ -298,6 +298,56 @@ class TestTPDataNormalizer:
         # Debe ser warning, no error
         assert any("IF" in warning for warning in validation.warnings)
     
+    def test_normalize_workout_extracts_feel_and_rpe(self, normalizer):
+        """Debe extraer feel y RPE cuando perceived_exertion esta presente."""
+        workout_with_rpe = {
+            "workout_bar": {"title": "Tempo Run", "sport": "run"},
+            "planned_completed": {
+                "duration": {"completed": "0:50:00"},
+                "tss": {"completed": "70"},
+            },
+            "perceived_exertion": {
+                "feel_value": 5,
+                "feel_label": "Very Strong",
+                "rpe_value": 2,
+            },
+        }
+        normalized, validation = normalizer.normalize_workout(workout_with_rpe)
+
+        assert normalized["feel"] == 5
+        assert normalized["feel_label"] == "Very Strong"
+        assert normalized["rpe"] == 2
+        assert "Feel" in validation.fields_present
+        assert "RPE" in validation.fields_present
+
+    def test_normalize_workout_feel_and_rpe_none_when_absent(self, normalizer, sample_raw_workout):
+        """Feel y RPE deben ser None cuando perceived_exertion no existe."""
+        normalized, _ = normalizer.normalize_workout(sample_raw_workout)
+
+        assert normalized["feel"] is None
+        assert normalized["feel_label"] is None
+        assert normalized["rpe"] is None
+
+    def test_normalize_workout_validates_rpe_out_of_range(self, normalizer):
+        """Debe generar warning cuando RPE esta fuera de rango 0-10."""
+        workout = {
+            "workout_bar": {"title": "Test"},
+            "perceived_exertion": {"rpe_value": 15},
+        }
+        _, validation = normalizer.normalize_workout(workout)
+
+        assert any("RPE" in w and "fuera de rango" in w for w in validation.warnings)
+
+    def test_normalize_workout_validates_feel_out_of_range(self, normalizer):
+        """Debe generar warning cuando feel esta fuera de rango 1-5."""
+        workout = {
+            "workout_bar": {"title": "Test"},
+            "perceived_exertion": {"feel_value": 8},
+        }
+        _, validation = normalizer.normalize_workout(workout)
+
+        assert any("Feel" in w and "fuera de rango" in w for w in validation.warnings)
+
     def test_normalize_workout_calculates_quality_score(self, normalizer, sample_raw_workout):
         """Debe calcular score de calidad alto para workout completo."""
         normalized, validation = normalizer.normalize_workout(sample_raw_workout)
