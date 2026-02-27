@@ -24,11 +24,15 @@ class NotificationUseCases:
     async def sync_subscribers(self) -> dict:
         """
         Consulta las actualizaciones del bot de Telegram para descubrir nuevos suscriptores.
+        Evita duplicados si el mismo usuario envió varios mensajes.
         """
         try:
             updates = await self.telegram.get_updates()
-            new_subscribers = 0
-            
+            if not updates:
+                return {"new_subscribers": 0, "success": True}
+
+            # 1. Extraer datos únicos de las actualizaciones (de-duplicación local)
+            unique_chats = {}
             for update in updates:
                 message = update.get("message")
                 if not message:
@@ -39,27 +43,39 @@ class NotificationUseCases:
                     continue
                 
                 chat_id = str(chat.get("id"))
-                username = chat.get("username")
-                first_name = chat.get("first_name")
-                
-                # Verificar si ya existe
-                query = select(TelegramSubscriberModel).where(TelegramSubscriberModel.chat_id == chat_id)
-                result = await self.db.execute(query)
-                subscriber = result.scalar_one_or_none()
-                
-                if not subscriber:
+                if chat_id not in unique_chats:
+                    unique_chats[chat_id] = {
+                        "username": chat.get("username"),
+                        "first_name": chat.get("first_name")
+                    }
+
+            if not unique_chats:
+                return {"new_subscribers": 0, "success": True}
+
+            # 2. Consultar cuáles ya existen en lote para minimizar roundtrips
+            chat_ids = list(unique_chats.keys())
+            query = select(TelegramSubscriberModel.chat_id).where(TelegramSubscriberModel.chat_id.in_(chat_ids))
+            result = await self.db.execute(query)
+            existing_ids = set(result.scalars().all())
+
+            # 3. Insertar solo los nuevos
+            new_subscribers_count = 0
+            for chat_id, data in unique_chats.items():
+                if chat_id not in existing_ids:
                     subscriber = TelegramSubscriberModel(
                         chat_id=chat_id,
-                        username=username,
-                        first_name=first_name,
+                        username=data["username"],
+                        first_name=data["first_name"],
                         is_active=True
                     )
                     self.db.add(subscriber)
-                    new_subscribers += 1
-                    logger.info(f"Nuevo suscriptor de Telegram: {username or first_name} ({chat_id})")
+                    new_subscribers_count += 1
+                    logger.info(f"Nuevo suscriptor de Telegram: {data['username'] or data['first_name']} ({chat_id})")
+
+            if new_subscribers_count > 0:
+                await self.db.commit()
             
-            await self.db.commit()
-            return {"new_subscribers": new_subscribers, "success": True}
+            return {"new_subscribers": new_subscribers_count, "success": True}
         except Exception as e:
             logger.error(f"Error al sincronizar suscriptores de Telegram: {e}")
             await self.db.rollback()
@@ -113,7 +129,7 @@ class NotificationUseCases:
             message = (
                 f"🔔 <b>Recordatorio de Revisión</b>\n\n"
                 f"Tienes <b>{count}</b> atletas con planes pendientes de revisar en la plataforma.\n\n"
-                f"👉 <a href='https://youngsters.app/admin/athletes'>Ir al Panel de Control</a>"
+                f"👉 <a href='https://youngsters.neuronomy.ai'>Ir al Panel de Control</a>"
             )
             
             # 4. Enviar a cada suscriptor
