@@ -9,7 +9,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from loguru import logger
 from typing import Optional
 
@@ -458,12 +458,30 @@ class AthleteService:
             return []
         
         # Obtener todos los tiles de atletas (estructura de pagina #home)
-        tiles = self._driver.find_elements(
+        all_tiles = self._driver.find_elements(
             By.CSS_SELECTOR, 
             ".athleteListAthletes .athleteCoachHome"
         )
         
-        logger.info(f"Se encontraron {len(tiles)} tiles de atletas")
+        # Filtrar elementos visibles y deduplicar por nombre (TP renderiza grilla y lista duplicadas)
+        tiles = []
+        seen_names = set()
+        
+        for t in all_tiles:
+            try:
+                if not t.is_displayed():
+                    continue
+                # Se extrae el nombre para asegurar que no agregamos el mismo atleta dos veces
+                name = self.get_athlete_name_from_tile(t)
+                if name:
+                    name_lower = name.lower()
+                    if name_lower not in seen_names:
+                        seen_names.add(name_lower)
+                        tiles.append(t)
+            except StaleElementReferenceException:
+                continue
+        
+        logger.info(f"Se encontraron {len(tiles)} tiles unicos visibles (de {len(all_tiles)} en el DOM)")
         return tiles
     
     def click_athlete_settings_button(self, athlete_tile, timeout: int = 10) -> bool:
@@ -1043,6 +1061,7 @@ class AthleteService:
         Returns:
             dict: Resultado parcial con found/full_name/tiles_checked
         """
+        username = username.strip().lower()
         result = {
             "found": False,
             "username": username,
@@ -1083,9 +1102,9 @@ class AthleteService:
                 continue
             
             result["tiles_checked"] += 1
-            modal_username = self.get_username_from_modal()
+            modal_username = self.get_username_from_modal().strip().lower()
             
-            if modal_username.lower() == username.lower():
+            if modal_username == username:
                 full_name = self.get_full_name_from_modal()
                 result["found"] = True
                 result["full_name"] = full_name
@@ -1130,6 +1149,7 @@ class AthleteService:
         Returns:
             dict: Resultado actualizado con found/full_name si hay match
         """
+        username = username.strip().lower()
         tiles = self.get_athlete_tiles(timeout)
         
         if not tiles:
@@ -1151,9 +1171,9 @@ class AthleteService:
                 continue
             
             result["tiles_checked"] += 1
-            modal_username = self.get_username_from_modal()
+            modal_username = self.get_username_from_modal().strip().lower()
             
-            if modal_username.lower() == username.lower():
+            if modal_username == username:
                 full_name = self.get_full_name_from_modal()
                 result["found"] = True
                 result["full_name"] = full_name
@@ -1253,6 +1273,9 @@ class AthleteService:
         total_tiles_checked = 0
         current_group = "My Athletes"
         remaining_groups = []  # Se obtiene lazy despues del primer grupo
+        
+        # Normalizar username de entrada
+        username = username.strip().lower()
         
         # =====================================================================
         # PASE 1: Busqueda rapida por primer nombre (si hay expected_name)

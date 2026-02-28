@@ -38,8 +38,8 @@ class AthleteAutomationUseCase:
             logger.error(f"Atleta {athlete_id} no encontrado")
             return
 
-        # Nueva restricción: Solo 'activo' o 'prueba'
-        allowed_statuses = ["activo", "prueba"]
+        # Restringir a 'activo'
+        allowed_statuses = ["activo"]
         if not athlete.client_status or athlete.client_status.lower() not in allowed_statuses:
             logger.info(f"Omitiendo automatización para {athlete.name}: status '{athlete.client_status}' no es elegible.")
             return
@@ -109,3 +109,93 @@ class AthleteAutomationUseCase:
         except Exception as e:
             logger.error(f"Error generando plan para {athlete.name}: {e}")
             await self.db.rollback()
+
+    async def process_new_athletes(self, new_record_ids: list[str]) -> None:
+        """
+        Orquesta la automatización inicial para atletas recién insertados.
+        """
+        if not new_record_ids:
+            return
+            
+        logger.info(f"Disparando automatización inicial para {len(new_record_ids)} atletas nuevos")
+        for athlete_id in new_record_ids:
+            try:
+                # El flujo completo: Sync TP Profile -> Sync Historial -> Generación Plan
+                await self.automate_athlete_sync_and_generation(athlete_id)
+            except Exception as e:
+                logger.error(f"Error procesando nuevo atleta {athlete_id}: {e}")
+
+    async def sync_missing_tp_names(self, exclude_ids: Optional[list[str]] = None) -> None:
+        """
+        Busca e intenta sincronizar los atletas activos que aún no tienen tp_name.
+        """
+        from sqlalchemy import select, func, or_
+        from app.infrastructure.database.models import AthleteModel
+        
+        exclude_ids = exclude_ids or []
+        
+        try:
+            query_missing = select(AthleteModel).where(
+                func.lower(AthleteModel.client_status) == "activo",
+                or_(AthleteModel.tp_name.is_(None), AthleteModel.tp_name == "")
+            )
+            result_missing = await self.db.execute(query_missing)
+            missing_athletes = result_missing.scalars().all()
+
+            if missing_athletes:
+                # Filtrar aquellos que acaban de ser procesados (ej. como nuevos)
+                missing_to_process = [
+                    a for a in missing_athletes 
+                    if a.id not in exclude_ids
+                ]
+                
+                if missing_to_process:
+                    logger.info(f"Reintentando sincronización de TrainingPeaks para {len(missing_to_process)} atletas activos sin nombre (TP).")
+                    for athlete in missing_to_process:
+                        logger.info(f"Reintentando TP Sync para atleta ya existente: {athlete.name}")
+                        try:
+                            await self.tp_sync.execute_sync_process(username=athlete.tp_username, athlete_id=athlete.id)
+                        except Exception as ex:
+                            logger.error(f"Error reintentando TP sync para {athlete.name}: {ex}")
+        except Exception as e:
+            logger.error(f"Error en sync_missing_tp_names: {e}")
+
+    async def generate_periodic_trainings(self, threshold_days: int) -> None:
+        """
+        Busca atletas que no han tenido generación reciente y dispara el flujo.
+        """
+        from sqlalchemy import select, func, or_
+        from app.infrastructure.database.models import AthleteModel
+        
+        try:
+            logger.info("Iniciando revisión de atletas para generación periódica de entrenamientos...")
+            threshold_date = datetime.now() - timedelta(days=threshold_days)
+            
+            query = select(AthleteModel).where(
+                or_(
+                    AthleteModel.last_training_generation_at == None,
+                    AthleteModel.last_training_generation_at <= threshold_date
+                )
+            ).where(
+                AthleteModel.is_deleted == False
+            ).where(
+                func.lower(AthleteModel.client_status).in_(["activo", "prueba"])
+            )
+            
+            result = await self.db.execute(query)
+            athletes = result.scalars().all()
+            
+            if not athletes:
+                logger.info("No hay atletas que requieran generación periódica en este momento.")
+                return
+
+            logger.info(f"Se encontraron {len(athletes)} atletas para revisión de automatización.")
+            
+            for athlete in athletes:
+                try:
+                    await self.automate_athlete_sync_and_generation(athlete.id)
+                except Exception as ex:
+                    logger.error(f"Error procesando automatización periódica para {athlete.name}: {ex}")
+                    continue
+        except Exception as e:
+            logger.error(f"Error en generate_periodic_trainings: {e}")
