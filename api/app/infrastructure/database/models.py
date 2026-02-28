@@ -170,6 +170,7 @@ class AthleteModel(Base):
     synced_at = Column(DateTime(timezone=True), nullable=True)
     is_deleted = Column(Boolean, nullable=False, default=False)
     last_training_generation_at = Column(DateTime(timezone=True), nullable=True)
+    inactive_since = Column(DateTime(timezone=True), nullable=True)
 
     # Datos Principales (Mapeados desde Airtable)
     name = Column(String(255), nullable=False, index=True)

@@ -180,6 +180,9 @@ def get_table_sync_config(
                 FieldMapping(airtable_field="¿Cuál es tu objetivo a corto plazo?", pg_column="short_term_goal"),
                 FieldMapping(airtable_field="¿Cuál es tu objetivo a mediano plazo?", pg_column="medium_term_goal"),
                 FieldMapping(airtable_field="¿Cuál es tu objetivo a largo plazo?", pg_column="long_term_goal"),
+                FieldMapping(airtable_field="¿Cuál es tu evento principal?", pg_column="main_event"),
+                FieldMapping(airtable_field="Tipo de evento", pg_column="event_type"),
+                FieldMapping(airtable_field="¿Tienes planeados eventos secundarios o de preparación?", pg_column="secondary_events"),
                 # Records
                 FieldMapping(airtable_field="Mejor tiempo en un 5k", pg_column="best_time_5k"),
                 FieldMapping(airtable_field="Mejor tiempo en un 10k", pg_column="best_time_10k"),
