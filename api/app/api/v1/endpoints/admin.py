@@ -20,6 +20,30 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     use_cases = AdminUseCases(db)
     return await use_cases.get_system_settings()
 
+@router.get("/athletes/pending-testing-plan")
+async def get_pending_testing_plans(db: AsyncSession = Depends(get_db)):
+    """
+    Obtiene la lista de atletas candidatos a recibir el plan de prueba de 1 semana.
+    """
+    use_cases = AdminUseCases(db)
+    return await use_cases.get_pending_testing_plans()
+
+@router.post("/athletes/{athlete_id}/assign-testing-plan")
+async def assign_testing_plan(athlete_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Asigna mediante Selenium el plan de prueba recomendado al atleta especificado.
+    """
+    use_cases = AdminUseCases(db)
+    result = await use_cases.assign_testing_plan(athlete_id)
+    
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=500,
+            detail=result.get("error", "Error desconocido asignando el plan")
+        )
+        
+    return result
+
 @router.post("/test-notification")
 async def test_notification(db: AsyncSession = Depends(get_db)):
     """

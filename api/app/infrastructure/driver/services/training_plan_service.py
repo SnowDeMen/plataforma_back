@@ -60,23 +60,24 @@ class TrainingPlanService:
         # Esperar a que cargue el contenido
         time.sleep(0.5)
     
-    def is_my_plans_expanded(self, timeout: int = 5) -> bool:
+    def is_folder_expanded(self, folder_name: str, timeout: int = 5) -> bool:
         """
-        Verifica si la carpeta "My Plans" esta expandida.
+        Verifica si la carpeta especificada esta expandida.
         
         La carpeta esta expandida si el div.expander tiene la clase "expanded".
         
         Args:
+            folder_name: Nombre de la carpeta a verificar
             timeout: Segundos de espera maxima
             
         Returns:
             bool: True si esta expandida, False si no
         """
         try:
-            # Buscar el folder que contiene "My Plans"
+            # Buscar el folder que contiene el nombre
             xpath = (
                 "//div[contains(@class, 'coachTrainingPlanLibraryFolder')]"
-                "//span[@class='titleContain' and text()='My Plans']"
+                f"//span[@class='titleContain' and text()='{folder_name}']"
                 "/ancestor::div[contains(@class, 'coachTrainingPlanLibraryFolder')]"
             )
             
@@ -98,24 +99,25 @@ class TrainingPlanService:
                 return False
                 
         except TimeoutException:
-            logger.warning("No se encontro la carpeta 'My Plans'")
+            logger.warning(f"No se encontro la carpeta '{folder_name}'")
             return False
     
-    def expand_my_plans(self, timeout: int = 10) -> None:
+    def expand_folder(self, folder_name: str, timeout: int = 10) -> None:
         """
-        Expande la carpeta "My Plans" si no esta expandida.
+        Expande la carpeta especificada si no esta expandida.
         
         Args:
+            folder_name: Nombre de la carpeta a expandir
             timeout: Segundos de espera maxima
         """
-        if self.is_my_plans_expanded(timeout):
-            logger.debug("'My Plans' ya esta expandida")
+        if self.is_folder_expanded(folder_name, timeout):
+            logger.debug(f"'{folder_name}' ya esta expandida")
             return
         
-        # Buscar el header de My Plans para hacer click
+        # Buscar el header de la carpeta para hacer click
         xpath = (
             "//div[contains(@class, 'coachTrainingPlanLibraryFolder')]"
-            "//span[@class='titleContain' and text()='My Plans']"
+            f"//span[@class='titleContain' and text()='{folder_name}']"
             "/ancestor::div[@class='toggleArea']"
         )
         
@@ -124,14 +126,14 @@ class TrainingPlanService:
                 EC.element_to_be_clickable((By.XPATH, xpath))
             )
             toggle_area.click()
-            logger.info("Click para expandir 'My Plans'")
+            logger.info(f"Click para expandir '{folder_name}'")
             time.sleep(0.5)
             
             # Verificar que se expandio
-            if not self.is_my_plans_expanded(timeout):
-                logger.warning("'My Plans' no se expandio despues del click")
+            if not self.is_folder_expanded(folder_name, timeout):
+                logger.warning(f"'{folder_name}' no se expandio despues del click")
         except TimeoutException:
-            logger.error("No se pudo expandir 'My Plans'")
+            logger.error(f"No se pudo expandir '{folder_name}'")
             raise
     
     def find_and_click_training_plan(self, plan_name: str, timeout: int = 10) -> None:
@@ -147,8 +149,9 @@ class TrainingPlanService:
         """
         wait = WebDriverWait(self._driver, timeout)
         
-        # Asegurar que My Plans este expandida
-        self.expand_my_plans(timeout)
+        # Asegurar que la carpeta del plan este expandida
+        # Asumimos que el nombre del plan es el mismo que el de su carpeta raiz
+        self.expand_folder(plan_name, timeout)
         
         # Buscar el tile del plan por el nombre en h3
         xpath = (
@@ -489,7 +492,7 @@ class TrainingPlanService:
         
         Flujo completo:
         1. Click en pestana Training Plans
-        2. Expandir My Plans si es necesario
+        2. Expandir la carpeta correspondiente al plan (basado en el nombre del plan)
         3. Buscar y hacer click en el plan
         4. En el modal: seleccionar atleta
         5. Establecer fecha de inicio
