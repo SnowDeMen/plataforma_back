@@ -5,10 +5,13 @@ Implementa la logica de negocio para operaciones con atletas,
 siguiendo el patron de arquitectura limpia.
 """
 from typing import Optional, List, Dict, Any
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update, delete, func
 from loguru import logger
-from datetime import datetime
+
+from app.infrastructure.database.models import AthleteModel, ChatSessionModel, TrainingPlanModel
 
 from app.application.dto.athlete_dto import (
     AthleteDTO,
@@ -400,9 +403,6 @@ class AthleteUseCases:
         - Restablece inactive_since a None si el client_status ya no es 'Baja'.
         - Elimina al atleta, sus sesiones y planes si han estado inactivos por > 3 meses.
         """
-        from sqlalchemy import select, update, delete, func
-        from app.infrastructure.database.models import AthleteModel, ChatSessionModel, TrainingPlanModel
-        from datetime import datetime, timezone, timedelta
         
         now = datetime.now(timezone.utc)
         three_months_ago = now - timedelta(days=90)
