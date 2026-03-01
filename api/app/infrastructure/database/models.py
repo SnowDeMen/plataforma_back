@@ -277,6 +277,7 @@ class AthleteModel(Base):
     bad_habits_percentage = Column(String, nullable=True)
     registration_date = Column(DateTime(timezone=True), nullable=True)
     training_start_date = Column(Date, nullable=True)  # Fecha ISO 8601 desde Airtable
+    plan_end_date = Column(Date, nullable=True)  # Fecha en que termina el bloque actual (para optimizar TP check)
 
     # Datos Generados por App (JSON se mantiene para estructuras complejas generadas internamente)
     performance = Column(JSON, nullable=True) 

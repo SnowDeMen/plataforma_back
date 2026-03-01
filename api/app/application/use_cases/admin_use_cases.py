@@ -4,7 +4,7 @@ Casos de uso para administración del sistema.
 from typing import Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.infrastructure.repositories.system_settings_repository import SystemSettingsRepository
 from app.infrastructure.repositories.athlete_repository import AthleteRepository
 from app.infrastructure.database.models import AthleteModel
@@ -153,14 +153,17 @@ class AdminUseCases:
                     athlete.training_start_date
                 )
                 
-                # 4. Actualizar estado a "Plan activo" para que salga de la vista de pendientes
+                # 4. Actualizar estado a "En diagnóstico" y establecer fecha de fin estimada (1 semana)
+                plan_end_date = athlete.training_start_date + timedelta(days=7)
+                
                 await self.athlete_repo.update(athlete_id, {
-                    "training_status": "Plan activo", 
-                    "last_training_generation_at": datetime.now()
+                    "training_status": "En diagnóstico", 
+                    "last_training_generation_at": datetime.now(),
+                    "plan_end_date": plan_end_date
                 })
                 await self.db.commit()
                 
-                logger.success(f"Testing plan '{testing_plan_name}' pre-asignado a {athlete.name}.")
+                logger.success(f"Testing plan '{testing_plan_name}' pre-asignado a {athlete.name}. Termina: {plan_end_date}")
                 return {"success": True, "message": f"Plan {testing_plan_name} asignado."}
                 
             finally:
