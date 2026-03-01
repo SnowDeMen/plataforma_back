@@ -183,9 +183,15 @@ class AthleteAutomationUseCase:
         """
         from sqlalchemy import select, func
         from app.infrastructure.database.models import AthleteModel
+        from app.infrastructure.repositories.system_settings_repository import SystemSettingsRepository
         
         try:
-            logger.info("Iniciando revisión de atletas para generación periódica (vía TP)...")
+            logger.info("Iniciando revisión de atletas para generación periódica...")
+            
+            # Obtener configuración de días de anticipación
+            settings_repo = SystemSettingsRepository(self.db)
+            days_in_advance = await settings_repo.get_value("days_in_advance_generation", 3)
+            logger.info(f"Días de anticipación configurados: {days_in_advance}")
             
             # 1. Obtener atletas en estados elegibles: "Por generar" o "En diagnóstico"
             query = select(AthleteModel).where(
@@ -193,7 +199,7 @@ class AthleteAutomationUseCase:
             ).where(
                 func.lower(AthleteModel.client_status).in_(["activo", "prueba"])
             ).where(
-                AthleteModel.training_status.in_(["Por generar", "En diagnóstico"])
+                AthleteModel.training_status.in_(["Por generar", "En diagnóstico", "Plan activo", "Por revisar"])
             )
             
             result = await self.db.execute(query)
@@ -208,10 +214,12 @@ class AthleteAutomationUseCase:
             # 2. Filtrar atletas que ya tienen plan_end_date en el futuro (Optimización)
             athletes_needing_tp_check = []
             athletes_ready_with_local_date = []
+            # Calcular fecha límite que justifica la generación de un nuevo plan
+            threshold_date = today + timedelta(days=days_in_advance)
             
             for a in athletes:
-                if a.plan_end_date and a.plan_end_date > today:
-                    logger.debug(f"Omitiendo TP check para {a.name}: tiene plan activo hasta {a.plan_end_date}")
+                if a.plan_end_date and a.plan_end_date > threshold_date:
+                    logger.debug(f"Omitiendo TP check para {a.name}: tiene plan activo hasta {a.plan_end_date} (fuera del umbral de {days_in_advance} días)")
                     continue
                 
                 # Si plan_end_date es hoy o pasado, ya podemos usarlo como base para el nuevo start_date
@@ -283,7 +291,12 @@ class AthleteAutomationUseCase:
                     # Ultimo recurso: fallback a threshold de dias desde ultima generacion
                     # (Esto maneja atletas nuevos que ni siquiera salen en el sidebar)
                     threshold_date = datetime.now() - timedelta(days=threshold_days)
-                    if not a.last_training_generation_at or a.last_training_generation_at <= threshold_date:
+                    
+                    last_gen = a.last_training_generation_at
+                    if last_gen and last_gen.tzinfo is not None:
+                        last_gen = last_gen.replace(tzinfo=None)
+                        
+                    if not last_gen or last_gen <= threshold_date:
                         # Empezar mañana y aplicar bumping
                         start_date = calculate_next_start_date(today + timedelta(days=1), a.preferred_rest_day)
                         final_processing_queue.append((a, start_date))

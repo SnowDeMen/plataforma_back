@@ -373,6 +373,13 @@ class PlanUseCases:
             await self.repository.update_status(plan_id, "review")
             final_message = "Plan generado exitosamente"
             await self.repository.update_progress(plan_id, 100, final_message)
+            
+            # Actualizar la fecha de fin del plan en el perfil del atleta para optimizar TP checks y programar la proxima generacion
+            if plan.end_date:
+                athlete_repo = AthleteRepository(self.db)
+                await athlete_repo.update(plan.athlete_id, {"plan_end_date": plan.end_date})
+                logger.info(f"plan_end_date actualizado a {plan.end_date} para atleta {plan.athlete_id} tras la generacion")
+                
             await self.db.commit()
 
             # Notificar completado (WebSocket/UI)
