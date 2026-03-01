@@ -19,8 +19,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Rename status to training_status
-    op.alter_column('athletes', 'status', new_column_name='training_status')
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = [col['name'] for col in inspector.get_columns('athletes')]
+    
+    # Rename status to training_status only if status is still there
+    if 'status' in columns and 'training_status' not in columns:
+        op.alter_column('athletes', 'status', new_column_name='training_status')
     
     # Unificar 'Por Revisar' a 'Por revisar' y asegurar valores por defecto
     op.execute("""
@@ -36,5 +41,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = [col['name'] for col in inspector.get_columns('athletes')]
+    
     # Rename training_status back to status
-    op.alter_column('athletes', 'training_status', new_column_name='status')
+    if 'training_status' in columns and 'status' not in columns:
+        op.alter_column('athletes', 'training_status', new_column_name='status')
