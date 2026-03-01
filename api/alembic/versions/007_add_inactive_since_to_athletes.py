@@ -1,6 +1,6 @@
 """add inactive_since to athletes
 
-Revision ID: 225a9b5a26e4
+Revision ID: 007
 Revises: 006
 Create Date: 2026-02-27 20:53:49.840196
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '225a9b5a26e4'
+revision: str = '007'
 down_revision: Union[str, Sequence[str], None] = '006'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

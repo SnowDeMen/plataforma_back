@@ -1,7 +1,7 @@
 """Add plan_end_date to athletes
 
-Revision ID: 5956fdf32aff
-Revises: 045b3c322f88
+Revision ID: 009
+Revises: 008
 Create Date: 2026-02-28 16:49:19.893308
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '5956fdf32aff'
-down_revision: Union[str, Sequence[str], None] = '045b3c322f88'
+revision: str = '009'
+down_revision: Union[str, Sequence[str], None] = '008'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -1,7 +1,7 @@
 """fix_training_status_default
 
-Revision ID: 045b3c322f88
-Revises: 225a9b5a26e4
+Revision ID: 008
+Revises: 007
 Create Date: 2026-02-28 00:23:50.608206
 
 """
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '045b3c322f88'
-down_revision: Union[str, Sequence[str], None] = '225a9b5a26e4'
+revision: str = '008'
+down_revision: Union[str, Sequence[str], None] = '007'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
