@@ -221,6 +221,40 @@ class TestAthleteContextBuilder:
         
         assert context == ""
     
+    def test_performance_context_includes_rpe_for_recent_workouts(self, builder, sample_metrics):
+        """Debe incluir RPE y sensacion en workouts recientes cuando estan presentes."""
+        recent = [
+            {
+                "_date_str": "2025-01-15",
+                "workout_type": "Tempo",
+                "duration_completed": "0:50:00",
+                "distance_completed": 10,
+                "tss_completed": 70,
+                "feel": 4,
+                "feel_label": "Strong",
+                "rpe": 7,
+            },
+            {
+                "_date_str": "2025-01-14",
+                "workout_type": "Easy",
+                "duration_completed": "1:00:00",
+                "distance_completed": 12,
+                "tss_completed": 45,
+                # sin feel/rpe — no completado
+            },
+        ]
+        context = builder.build_performance_context(sample_metrics, recent_workouts=recent)
+
+        # El primer workout debe incluir datos de esfuerzo percibido
+        assert "Sensacion:4/5" in context
+        assert "Strong" in context
+        assert "RPE:7/10" in context
+        # El segundo workout no tiene RPE, no debe generar info extra
+        lines = context.split("\n")
+        easy_lines = [l for l in lines if "Easy" in l]
+        assert easy_lines  # debe existir la linea del workout
+        assert "RPE" not in easy_lines[0]  # no debe tener RPE
+
     def test_extract_recent_workouts(self, builder):
         """Debe extraer workouts recientes del historial."""
         performance_data = {

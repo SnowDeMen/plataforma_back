@@ -140,9 +140,26 @@ class AthleteContextBuilder:
                 w_distance = w.get("distance", w.get("distance_completed", "N/A"))
                 w_tss = w.get("tss", w.get("tss_completed", "N/A"))
                 w_status = "OK" if w.get("completed", True) else "Omitido"
+                
+                # Esfuerzo percibido (solo si hay datos)
+                rpe_parts: List[str] = []
+                w_feel = w.get("feel")
+                w_rpe = w.get("rpe")
+                if w_feel is not None:
+                    feel_lbl = w.get("feel_label", "")
+                    rpe_parts.append(
+                        f"Sensacion:{w_feel}/5" + (f"({feel_lbl})" if feel_lbl else "")
+                    )
+                if w_rpe is not None:
+                    rpe_lbl = w.get("rpe_label", "")
+                    rpe_parts.append(
+                        f"RPE:{w_rpe}/10" + (f"({rpe_lbl})" if rpe_lbl else "")
+                    )
+                rpe_info = " | " + " ".join(rpe_parts) if rpe_parts else ""
+                
                 lines.append(
                     f"- {w_date} | {w_type} | {w_duration} | "
-                    f"{w_distance}km | TSS:{w_tss} | {w_status}"
+                    f"{w_distance}km | TSS:{w_tss} | {w_status}{rpe_info}"
                 )
         
         return "\n".join(lines)

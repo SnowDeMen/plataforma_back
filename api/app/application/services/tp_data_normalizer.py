@@ -211,6 +211,13 @@ class TPDataNormalizer:
             self._extract_nested(planned_completed, "averageSpeed", "completed")
         )
         
+        # --- Esfuerzo percibido (solo workouts completados) ---
+        perceived = raw.get("perceived_exertion") or {}
+        feel = self._parse_int(perceived.get("feel_value"))     # 1-5 or None
+        feel_label = perceived.get("feel_label") or None        # "Very Strong", etc.
+        rpe = self._parse_int(perceived.get("rpe_value"))       # 0-10 or None
+        rpe_label = perceived.get("rpe_label") or None          # "Somewhat hard", etc.
+        
         # --- Inferir estado ---
         status = self._infer_status(
             duration_completed=duration_completed,
@@ -230,7 +237,9 @@ class TPDataNormalizer:
             hr_avg=hr_avg,
             hr_max=hr_max,
             distance_completed=distance_completed,
-            duration_completed=duration_completed
+            duration_completed=duration_completed,
+            feel=feel,
+            rpe=rpe,
         )
         
         # --- Calcular score de calidad ---
@@ -279,6 +288,12 @@ class TPDataNormalizer:
             "calories": calories,
             "avg_pace": avg_pace,
             "avg_speed": avg_speed,
+            
+            # Esfuerzo percibido (solo completados)
+            "feel": feel,             # 1-5 (How did you feel?) or None
+            "feel_label": feel_label, # e.g. "Very Strong", "Normal", or None
+            "rpe": rpe,               # 0-10 (Rating of Perceived Exertion) or None
+            "rpe_label": rpe_label,   # e.g. "Somewhat hard", "Moderate" or None
             
             # Metadata
             "_validation": {
@@ -454,7 +469,9 @@ class TPDataNormalizer:
         hr_avg: Optional[int],
         hr_max: Optional[int],
         distance_completed: Optional[float],
-        duration_completed: Optional[str]
+        duration_completed: Optional[str],
+        feel: Optional[int] = None,
+        rpe: Optional[int] = None,
     ) -> None:
         """Valida los datos del workout y actualiza el reporte."""
         
@@ -502,6 +519,18 @@ class TPDataNormalizer:
             validation.fields_present.add("Duracion")
             if not self._is_valid_duration(duration_completed):
                 validation.warnings.append(f"Formato de duracion inusual: {duration_completed}")
+        
+        # Validar feel (How did you feel?) — rango 1-5
+        if feel is not None:
+            validation.fields_present.add("Feel")
+            if not (1 <= feel <= 5):
+                validation.warnings.append(f"Feel fuera de rango (1-5): {feel}")
+        
+        # Validar RPE — rango 0-10
+        if rpe is not None:
+            validation.fields_present.add("RPE")
+            if not (0 <= rpe <= 10):
+                validation.warnings.append(f"RPE fuera de rango (0-10): {rpe}")
     
     def _is_valid_duration(self, duration: str) -> bool:
         """Verifica si el formato de duracion es valido (h:mm:ss o mm:ss)."""
