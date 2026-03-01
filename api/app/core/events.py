@@ -208,7 +208,6 @@ async def _run_sync_task() -> None:
         logger.info("Iniciando Airtable -> Postgres sync (tarea programada)...")
         # Reusamos la logica del script CLI
         service, pg_repo, _ = build_from_env(pg_dsn_env="DATABASE_URL")
-        ç
         config = get_table_sync_config(
             airtable_table_name=settings.AIRTABLE_TABLE_NAME,
             airtable_last_modified_field=settings.AIRTABLE_LAST_MOD_FIELD,

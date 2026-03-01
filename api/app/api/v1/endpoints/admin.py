@@ -101,3 +101,19 @@ async def update_notification_interval(
             return {"message": f"Configuración guardada, pero hubo un error al reiniciar el job: {str(e)}", "success": True}
             
     return {"message": f"Configuración guardada para el próximo reinicio", "success": True}
+
+@router.post("/settings/days-in-advance")
+async def update_days_in_advance_generation(
+    days: int, 
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Actualiza el número de días de anticipación con los que se genera el próximo plan mensual basado en plan_end_date.
+    """
+    use_cases = AdminUseCases(db)
+    success = await use_cases.update_days_in_advance_generation(days)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="Días de anticipación inválidos (debe ser >= 0)")
+        
+    return {"message": f"Días de anticipación actualizados a {days}", "success": True}

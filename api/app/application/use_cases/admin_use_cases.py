@@ -46,6 +46,22 @@ class AdminUseCases:
         logger.info(f"Intervalo de notificaciones actualizado a {hours}h")
         return True
 
+    async def update_days_in_advance_generation(self, days: int) -> bool:
+        """
+        Actualiza el número de días de anticipación con los que se genera el próximo plan mensual.
+        """
+        if days < 0:
+            return False
+            
+        await self.settings_repo.set_value(
+            "days_in_advance_generation", 
+            days,
+            "Días de anticipación para generar automáticamente el nuevo plan (basado en plan_end_date)."
+        )
+        await self.db.commit()
+        logger.info(f"Días de anticipación para generación actualizados a {days}")
+        return True
+
     async def seed_default_settings(self) -> None:
         """
         Puebla configuraciones iniciales si no existen.
@@ -55,6 +71,11 @@ class AdminUseCases:
                 "key": "telegram_notification_interval_hours",
                 "value": 24.0,
                 "description": "Frecuencia con la que se envían alertas de atletas pendientes (horas)."
+            },
+            {
+                "key": "days_in_advance_generation",
+                "value": 3,
+                "description": "Días de anticipación para generar automáticamente el nuevo plan (basado en plan_end_date)."
             }
         ]
         
