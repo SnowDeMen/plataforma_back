@@ -39,7 +39,7 @@ router = APIRouter(prefix="/athletes", tags=["Athletes"])
     summary="Listar atletas con filtros opcionales"
 )
 async def list_athletes(
-    training_status: Optional[str] = Query(None, alias="status", description="Filtrar por training_status (Por generar, Por revisar, Plan activo)"),
+    training_status: Optional[str] = Query(None, alias="status", description="Filtrar por training_status (Por generar, Por revisar, Plan activo, En diagnóstico, Pendiente ingreso)"),
     client_status: Optional[str] = Query(None, description="Filtrar por client_status (Airtable: ACTIVO, PRUEBA, etc)"),
     discipline: Optional[str] = Query(None, description="Filtrar por disciplina"),
     limit: int = Query(100, ge=1, le=500, description="Maximo de resultados"),
@@ -49,7 +49,7 @@ async def list_athletes(
     """
     Lista todos los atletas con filtros opcionales.
     
-    - **status**: Filtrar por training_status (Por generar, Por revisar, Plan activo)
+    - **status**: Filtrar por training_status (Por generar, Por revisar, Plan activo, En diagnóstico, Pendiente ingreso)
     - **client_status**: Filtrar por status administrativo (Airtable: ACTIVO, PRUEBA, etc)
     - **discipline**: Filtrar por disciplina
     - **limit**: Numero maximo de resultados
@@ -79,6 +79,8 @@ async def get_status_counts(
     - Por generar
     - Por revisar
     - Plan activo
+    - En diagnóstico
+    - Pendiente ingreso
     """
     return await use_cases.get_status_counts()
 
@@ -173,6 +175,8 @@ async def update_athlete_status(
     - Por generar
     - Por revisar
     - Plan activo
+    - En diagnóstico
+    - Pendiente ingreso
     """
     try:
         return await use_cases.update_status(athlete_id, dto)

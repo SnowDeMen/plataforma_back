@@ -229,6 +229,8 @@ class AthleteUseCases:
                 medidores=[s.strip() for s in athlete.sensors_owned.split(',')] if athlete.sensors_owned else [],
                 equipo=athlete.watch_brand_model,
                 eventoObjetivo=athlete.main_event,
+                tipoEvento=athlete.event_type,
+                eventosSecundarios=athlete.secondary_events,
                 diasParaEvento=None, 
                 dedicacion=athlete.training_hours_weekly
             ),
@@ -367,7 +369,7 @@ class AthleteUseCases:
         result = await self.db.execute(query)
         rows = result.all()
         
-        counts = {"Por generar": 0, "Por revisar": 0, "Plan activo": 0}
+        counts = {"Por generar": 0, "Por revisar": 0, "Plan activo": 0, "En diagnóstico": 0, "Pendiente ingreso": 0}
         for status, count in rows:
             if status in counts:
                 counts[status] = count

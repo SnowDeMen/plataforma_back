@@ -228,7 +228,9 @@ class AthleteRepository:
         counts = {
             "Por generar": 0,
             "Por revisar": 0,
-            "Plan activo": 0
+            "Plan activo": 0,
+            "En diagnóstico": 0,
+            "Pendiente ingreso": 0
         }
         
         for status, count in rows:
