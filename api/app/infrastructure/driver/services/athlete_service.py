@@ -11,7 +11,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from loguru import logger
-from typing import Optional
+from typing import Optional, Dict, List
 
 
 class AthleteService:
@@ -395,6 +395,86 @@ class AthleteService:
         logger.error(f"Fallo la seleccion de atleta para: {name}. Intentos: {variations}")
         raise AthleteNotFoundInTPException(name, variations)
     
+    def get_last_workout_date(self, name: str, timeout: int = 10) -> Optional[str]:
+        """
+        Extacts the last planned workout date from the left sidebar of the calendar.
+        The date is in the format M/D/YY under the <p class="lastPlannedWorkout"> element
+        for the given athlete.
+        """
+        self.click_athlete_library()
+        self.expand_all_athlete_libraries()
+        
+        wait = WebDriverWait(self._driver, timeout)
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "[data_cy='itemsContainer']")))
+        except TimeoutException:
+            logger.warning("No se pudo cargar el contenedor de la lista de atletas.")
+            return None
+            
+        name_literal = self._xpath_literal(name.strip())
+        
+        # Buscar el tile exacto del atleta y luego el elemento lastPlannedWorkout
+        xpath = (
+            "//div[@data_cy='itemsContainer']"
+            "//div[contains(@class,'athleteTile')]"
+            f"[.//div[@data_cy='athleteTileName']/span[normalize-space(text()) = {name_literal}]]"
+            "//p[@class='lastPlannedWorkout']"
+        )
+        
+        try:
+            date_element = self._driver.find_element(By.XPATH, xpath)
+            date_str = date_element.text.strip()
+            
+            if date_str:
+                logger.info(f"Last planned workout found for '{name}': {date_str}")
+                return date_str
+            return None
+        except NoSuchElementException:
+            logger.warning(f"No se encontro fecha (lastPlannedWorkout) para el atleta '{name}'")
+            return None
+        except Exception as e:
+            logger.error(f"Error extrayendo fecha de lastPlannedWorkout para '{name}': {e}")
+            return None
+
+    def get_all_last_workout_dates(self, timeout: int = 10) -> Dict[str, str]:
+        """
+        Extacts the last planned workout date from the left sidebar of the calendar for ALL athletes.
+        Returns a dictionary mapping athlete_name (lowercase) to their date string.
+        """
+        self.click_athlete_library()
+        self.expand_all_athlete_libraries()
+        
+        wait = WebDriverWait(self._driver, timeout)
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "[data_cy='itemsContainer']")))
+        except TimeoutException:
+            logger.warning("No se pudo cargar el contenedor de la lista de atletas.")
+            return {}
+            
+        xpath = "//div[@data_cy='itemsContainer']//div[contains(@class,'athleteTile')]"
+        try:
+            tiles = self._driver.find_elements(By.XPATH, xpath)
+            dates = {}
+            for tile in tiles:
+                try:
+                    name_span = tile.find_element(By.XPATH, ".//div[@data_cy='athleteTileName']/span")
+                    name = name_span.text.strip().lower()
+                    
+                    try:
+                        date_p = tile.find_element(By.XPATH, ".//p[@class='lastPlannedWorkout']")
+                        date_str = date_p.text.strip()
+                        if date_str:
+                            dates[name] = date_str
+                    except NoSuchElementException:
+                        pass
+                except Exception:
+                    continue
+            logger.info(f"Se encontraron fechas de lastPlannedWorkout para {len(dates)} atletas.")
+            return dates
+        except Exception as e:
+            logger.error(f"Error extrayendo multiples fechas desde la vista de calendario: {e}")
+            return {}
+
     # =========================================================================
     # METODOS PARA BUSQUEDA POR USERNAME (Pagina #home)
     # =========================================================================

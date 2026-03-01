@@ -12,8 +12,9 @@ from app.infrastructure.driver.selenium_executor import run_selenium
 from app.infrastructure.external.airtable_sync.airtable_client import AirtableClient, AirtableCredentials
 from app.application.use_cases.plan_use_cases import PlanUseCases
 from app.application.dto.plan_dto import PlanGenerationRequestDTO, AthleteInfoDTO
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from app.core.config import settings
+from app.shared.utils.date_utils import calculate_next_start_date
 
 from app.application.use_cases.tp_sync_use_cases import TPSyncUseCases
 
@@ -29,7 +30,7 @@ class AthleteAutomationUseCase:
         self.tp_sync = TPSyncUseCases()
         self.plan_use_cases = PlanUseCases(db)
 
-    async def automate_athlete_sync_and_generation(self, athlete_id: str):
+    async def automate_athlete_sync_and_generation(self, athlete_id: str, start_date: Optional[date] = None):
         """
         Ejecuta el flujo completo de automatización para un atleta.
         """
@@ -38,8 +39,8 @@ class AthleteAutomationUseCase:
             logger.error(f"Atleta {athlete_id} no encontrado")
             return
 
-        # Restringir a 'activo'
-        allowed_statuses = ["activo"]
+        # Restringir a 'activo' y 'prueba'
+        allowed_statuses = ["activo", "prueba"]
         if not athlete.client_status or athlete.client_status.lower() not in allowed_statuses:
             logger.info(f"Omitiendo automatización para {athlete.name}: status '{athlete.client_status}' no es elegible.")
             return
@@ -90,12 +91,15 @@ class AthleteAutomationUseCase:
                 performance=athlete.performance if athlete.performance else {}
             )
 
+            # Usar start_date proporcionado o default (mañana)
+            final_start_date = start_date or (datetime.now() + timedelta(days=1)).date()
+
             dto = PlanGenerationRequestDTO(
                 athlete_id=athlete_id,
                 athlete_name=athlete.name,
                 athlete_info=athlete_info,
                 weeks=settings.ATHLETE_TRAINING_GEN_WEEKS,
-                start_date=(datetime.now() + timedelta(days=1)).date()
+                start_date=final_start_date
             )
             await self.plan_use_cases.create_and_generate(dto)
             
@@ -118,9 +122,18 @@ class AthleteAutomationUseCase:
             return
             
         logger.info(f"Disparando automatización inicial para {len(new_record_ids)} atletas nuevos")
+        today = datetime.now().date()
         for athlete_id in new_record_ids:
             try:
-                # El flujo completo: Sync TP Profile -> Sync Historial -> Generación Plan
+                # 1. Verificar si el atleta tiene fecha de inicio futura
+                athlete = await self.repository.get_by_id(athlete_id)
+                if athlete and athlete.training_start_date and athlete.training_start_date > today:
+                    logger.info(f"Atleta {athlete.name} tiene fecha de inicio futura ({athlete.training_start_date}). Marcando como 'Pendiente ingreso'.")
+                    await self.repository.update(athlete_id, {"training_status": "Pendiente ingreso"})
+                    await self.db.commit()
+                    continue
+
+                # 2. El flujo completo normal: Sync TP Profile -> Sync Historial -> Generación Plan
                 await self.automate_athlete_sync_and_generation(athlete_id)
             except Exception as e:
                 logger.error(f"Error procesando nuevo atleta {athlete_id}: {e}")
@@ -163,39 +176,132 @@ class AthleteAutomationUseCase:
     async def generate_periodic_trainings(self, threshold_days: int) -> None:
         """
         Busca atletas que no han tenido generación reciente y dispara el flujo.
+        Modificado para:
+        1. Solo procesar "Por generar" o "En diagnóstico".
+        2. Usar plan_end_date para optimizar (evitar TP scraping si no ha terminado el bloque).
+        3. Calcular start_date considerando días de descanso (rest day awareness).
         """
-        from sqlalchemy import select, func, or_
+        from sqlalchemy import select, func
         from app.infrastructure.database.models import AthleteModel
         
         try:
-            logger.info("Iniciando revisión de atletas para generación periódica de entrenamientos...")
-            threshold_date = datetime.now() - timedelta(days=threshold_days)
+            logger.info("Iniciando revisión de atletas para generación periódica (vía TP)...")
             
+            # 1. Obtener atletas en estados elegibles: "Por generar" o "En diagnóstico"
             query = select(AthleteModel).where(
-                or_(
-                    AthleteModel.last_training_generation_at == None,
-                    AthleteModel.last_training_generation_at <= threshold_date
-                )
-            ).where(
                 AthleteModel.is_deleted == False
             ).where(
                 func.lower(AthleteModel.client_status).in_(["activo", "prueba"])
+            ).where(
+                AthleteModel.training_status.in_(["Por generar", "En diagnóstico"])
             )
             
             result = await self.db.execute(query)
             athletes = result.scalars().all()
             
             if not athletes:
-                logger.info("No hay atletas que requieran generación periódica en este momento.")
+                logger.info("No hay atletas activos en estados elegibles para automatización.")
                 return
 
-            logger.info(f"Se encontraron {len(athletes)} atletas para revisión de automatización.")
+            today = datetime.now().date()
             
-            for athlete in athletes:
+            # 2. Filtrar atletas que ya tienen plan_end_date en el futuro (Optimización)
+            athletes_needing_tp_check = []
+            athletes_ready_with_local_date = []
+            
+            for a in athletes:
+                if a.plan_end_date and a.plan_end_date > today:
+                    logger.debug(f"Omitiendo TP check para {a.name}: tiene plan activo hasta {a.plan_end_date}")
+                    continue
+                
+                # Si plan_end_date es hoy o pasado, ya podemos usarlo como base para el nuevo start_date
+                # Evitando el scrape de TP si el dato local es confiable (opcional, pero optimiza)
+                if a.plan_end_date and a.plan_end_date <= today:
+                    # El nuevo plan empieza el día después de que terminó el anterior
+                    baseline_date = a.plan_end_date + timedelta(days=1)
+                    athletes_ready_with_local_date.append((a, baseline_date))
+                else:
+                    # No tenemos plan_end_date confiable, necesitamos preguntar a TP
+                    athletes_needing_tp_check.append(a)
+
+            # 3. Extraer fechas de TP solo para los que realmente lo necesitan
+            tp_dates = {}
+            if athletes_needing_tp_check:
+                logger.info(f"Extrayendo fechas de TP para {len(athletes_needing_tp_check)} atletas...")
+                def _scrape_all_dates():
+                    session = None
+                    try:
+                        session = DriverManager.create_session("PeriodicTrainingSync")
+                        session.auth_service.login_with_cookie()
+                        return session.athlete_service.get_all_last_workout_dates()
+                    except Exception as e:
+                        logger.error(f"Error en extraccion masiva de fechas TP: {e}")
+                        return {}
+                    finally:
+                        if session:
+                            session.close()
+
+                tp_dates = await run_selenium(_scrape_all_dates)
+            
+            # 4. Consolidar lista final a procesar
+            final_processing_queue = [] # List of (athlete, start_date)
+            
+            # Agregar los que ya tenían fecha local
+            for a, base_date in athletes_ready_with_local_date:
+                start_date = calculate_next_start_date(base_date, a.preferred_rest_day)
+                final_processing_queue.append((a, start_date))
+            
+            # Procesar los scrapeados de TP
+            for a in athletes_needing_tp_check:
+                search_name = (a.tp_name or a.name).strip().lower()
+                scraped_date = None
+                
+                if search_name in tp_dates:
+                    try:
+                        d_str = tp_dates[search_name]
+                        try:
+                            scraped_date = datetime.strptime(d_str, "%m/%d/%y").date()
+                        except ValueError:
+                            scraped_date = datetime.strptime(d_str, "%m/%d/%Y").date()
+                    except (ValueError, TypeError):
+                        pass
+
+                if scraped_date:
+                    if scraped_date <= today:
+                        # El plan empieza el día después del último workout
+                        base_date = scraped_date + timedelta(days=1)
+                        # Pero si el día después es pasado (ej: dejó de entrenar hace 1 mes), 
+                        # empezamos mañana como mínimo
+                        if base_date <= today:
+                            base_date = today + timedelta(days=1)
+                            
+                        start_date = calculate_next_start_date(base_date, a.preferred_rest_day)
+                        final_processing_queue.append((a, start_date))
+                    else:
+                        logger.debug(f"{a.name}: TP dice que tiene plan hasta {scraped_date}. Ignorando.")
+                else:
+                    # Ultimo recurso: fallback a threshold de dias desde ultima generacion
+                    # (Esto maneja atletas nuevos que ni siquiera salen en el sidebar)
+                    threshold_date = datetime.now() - timedelta(days=threshold_days)
+                    if not a.last_training_generation_at or a.last_training_generation_at <= threshold_date:
+                        # Empezar mañana y aplicar bumping
+                        start_date = calculate_next_start_date(today + timedelta(days=1), a.preferred_rest_day)
+                        final_processing_queue.append((a, start_date))
+
+            if not final_processing_queue:
+                logger.info("Ningún atleta requiere generación de plan tras aplicar filtros y optimizaciones.")
+                return
+
+            logger.info(f"Se procesarán {len(final_processing_queue)} atletas.")
+            
+            for athlete, start_date in final_processing_queue:
                 try:
-                    await self.automate_athlete_sync_and_generation(athlete.id)
+                    logger.info(f"Gatillando automatización para {athlete.name}. Inicio planeado: {start_date}")
+                    await self.automate_athlete_sync_and_generation(athlete.id, start_date=start_date)
                 except Exception as ex:
                     logger.error(f"Error procesando automatización periódica para {athlete.name}: {ex}")
                     continue
+                    
         except Exception as e:
             logger.error(f"Error en generate_periodic_trainings: {e}")
+

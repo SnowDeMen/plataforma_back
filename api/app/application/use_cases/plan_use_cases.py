@@ -3,7 +3,7 @@ Casos de uso para operaciones de planes de entrenamiento.
 Contiene la logica de negocio para generar, aprobar y gestionar planes.
 """
 from typing import Optional, List, Dict, Any, Callable
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +33,11 @@ from app.infrastructure.repositories.athlete_repository import AthleteRepository
 from app.infrastructure.autogen.plan_generator import PlanGenerator
 from app.shared.exceptions.domain import PlanNotFoundException
 from app.application.interfaces.trainingpeaks_plan_publisher import TrainingPeaksPlanPublisher
+
+from app.infrastructure.driver.driver_manager import DriverManager
+from app.infrastructure.driver.selenium_executor import run_selenium
+from app.shared.utils.date_utils import calculate_next_start_date
+
 
 
 class PlanUseCases:
@@ -178,6 +183,9 @@ class PlanUseCases:
         Returns:
             TrainingPlanDTO con el plan creado en estado pending
         """
+        # 0. Limpiar planes incompletos previos (pending/generating)
+        await self.repository.delete_incomplete_plans_by_athlete(dto.athlete_id)
+
         # Extraer performance y computed_metrics
         performance = dto.athlete_info.performance or {}
         computed_metrics = performance.get('computed_metrics') if isinstance(performance, dict) else None
@@ -205,13 +213,57 @@ class PlanUseCases:
                 f"TSB={computed_metrics.get('tsb', 'N/A')}"
             )
         
+        # Obtener start_date
+        start_date = dto.start_date
+        today = datetime.now().date()
+        if not start_date or start_date <= today:
+            try:
+                
+                
+                athlete_repo = AthleteRepository(self.db)
+                athlete = await athlete_repo.get_by_id(dto.athlete_id)
+                tp_name = athlete.tp_name if athlete and athlete.tp_name else dto.athlete_name
+
+                def _scrape_start_date():
+                    session = None
+                    try:
+                        session = DriverManager.create_session(f"Date_{tp_name}")
+                        session.auth_service.login_with_cookie()
+                        date_str = session.athlete_service.get_last_workout_date(tp_name)
+                        if date_str:
+                            try:
+                                dt = datetime.strptime(date_str, "%m/%d/%y")
+                                return (dt + timedelta(days=1)).date()
+                            except ValueError:
+                                try:
+                                    dt = datetime.strptime(date_str, "%m/%d/%Y")
+                                    return (dt + timedelta(days=1)).date()
+                                except ValueError:
+                                    return None
+                        return None
+                    finally:
+                        if session:
+                            session.close()
+
+                scraped_date = await run_selenium(_scrape_start_date)
+                if scraped_date and scraped_date > today:
+                    preferred_rest_day = athlete.preferred_rest_day if athlete else None
+                    start_date = calculate_next_start_date(scraped_date, preferred_rest_day)
+                    logger.info(f"Start date overridden from TP for {tp_name}: {start_date}")
+            except Exception as e:
+                logger.warning(f"No se pudo extraer la fecha de inicio desde TrainingPeaks: {e}")
+
+        # Si aún no hay start_date válido, fallback as a normal generate
+        if not start_date:
+            start_date = today
+
         # Crear plan en BD
         plan = await self.repository.create(
             athlete_id=dto.athlete_id,
             athlete_name=dto.athlete_name,
             athlete_context=athlete_context,
             weeks=dto.weeks,
-            start_date=dto.start_date
+            start_date=start_date
         )
         
         await self.db.commit()
@@ -496,6 +548,7 @@ class PlanUseCases:
                 approved_at=now,
                 applied_at=now,
             )
+            
             await self.db.commit()
 
             plan = await self.repository.get_by_id(plan_id)
