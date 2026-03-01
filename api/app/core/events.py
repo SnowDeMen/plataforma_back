@@ -143,8 +143,8 @@ async def _setup_scheduler(app: FastAPI) -> None:
         logger.warning("Configuracion de Airtable incompleta - el sync automatico no se iniciara")
 
     # Job: Entrenamiento Periódico
-    #if settings.RUN_STARTUP_TASKS:
-    #    scheduler.add_job(_run_periodic_training_generation_task, id="periodic_training_generation_initial")
+    if settings.RUN_STARTUP_TASKS:
+        scheduler.add_job(_run_periodic_training_generation_task, id="periodic_training_generation_initial")
         
     scheduler.add_job(
         _run_periodic_training_generation_task,
@@ -203,12 +203,12 @@ async def _run_inactive_athlete_cleanup_task() -> None:
 
 
 async def _run_sync_task() -> None:
-    """Ejecuta la logica de sincronizacion de Airtable."""
+    """Ejecuta la logica de sincronizacion de Airtable y Training Peaks."""
     try:
         logger.info("Iniciando Airtable -> Postgres sync (tarea programada)...")
         # Reusamos la logica del script CLI
         service, pg_repo, _ = build_from_env(pg_dsn_env="DATABASE_URL")
-        
+        ç
         config = get_table_sync_config(
             airtable_table_name=settings.AIRTABLE_TABLE_NAME,
             airtable_last_modified_field=settings.AIRTABLE_LAST_MOD_FIELD,

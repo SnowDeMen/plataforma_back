@@ -6,7 +6,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from loguru import logger
 
 from app.infrastructure.database.models import TrainingPlanModel
@@ -332,6 +332,22 @@ class PlanRepository:
         await self.db.delete(plan)
         logger.info(f"TrainingPlan eliminado: {plan_id}")
         return True
+
+    async def delete_incomplete_plans_by_athlete(self, athlete_id: str) -> int:
+        """
+        Elimina planes que quedaron en estado 'pending' o 'generating' para un atleta.
+        Útil para limpiar intentos fallidos antes de una nueva generación.
+        """
+        query = delete(TrainingPlanModel).where(
+            TrainingPlanModel.athlete_id == athlete_id
+        ).where(
+            TrainingPlanModel.status.in_(["pending", "generating"])
+        )
+        result = await self.db.execute(query)
+        count = result.rowcount
+        if count > 0:
+            logger.info(f"Se eliminaron {count} planes incompletos para el atleta {athlete_id}")
+        return count
     
     async def get_all(
         self,
