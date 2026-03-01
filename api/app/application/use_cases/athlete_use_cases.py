@@ -5,10 +5,13 @@ Implementa la logica de negocio para operaciones con atletas,
 siguiendo el patron de arquitectura limpia.
 """
 from typing import Optional, List, Dict, Any
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update, delete, func
 from loguru import logger
-from datetime import datetime
+
+from app.infrastructure.database.models import AthleteModel, ChatSessionModel, TrainingPlanModel
 
 from app.application.dto.athlete_dto import (
     AthleteDTO,
@@ -226,6 +229,8 @@ class AthleteUseCases:
                 medidores=[s.strip() for s in athlete.sensors_owned.split(',')] if athlete.sensors_owned else [],
                 equipo=athlete.watch_brand_model,
                 eventoObjetivo=athlete.main_event,
+                tipoEvento=athlete.event_type,
+                eventosSecundarios=athlete.secondary_events,
                 diasParaEvento=None, 
                 dedicacion=athlete.training_hours_weekly
             ),
@@ -364,7 +369,7 @@ class AthleteUseCases:
         result = await self.db.execute(query)
         rows = result.all()
         
-        counts = {"Por generar": 0, "Por revisar": 0, "Plan activo": 0}
+        counts = {"Por generar": 0, "Por revisar": 0, "Plan activo": 0, "En diagnóstico": 0, "Pendiente ingreso": 0}
         for status, count in rows:
             if status in counts:
                 counts[status] = count
@@ -392,4 +397,66 @@ class AthleteUseCases:
         
         logger.info(f"Atleta {athlete_id} eliminado")
         return True
+
+    async def process_inactive_athletes(self) -> dict:
+        """
+        Procesa a los atletas cuyo client_status es 'Baja'.
+        - Asigna inactive_since si actualmente es NULL.
+        - Restablece inactive_since a None si el client_status ya no es 'Baja'.
+        - Elimina al atleta, sus sesiones y planes si han estado inactivos por > 3 meses.
+        """
+        
+        now = datetime.now(timezone.utc)
+        three_months_ago = now - timedelta(days=90)
+        
+        # 1. Manejar atletas actualmente activos o no 'Baja' que podrian haber tenido 'Baja' antes
+        reset_query = (
+            update(AthleteModel)
+            .where(func.lower(AthleteModel.client_status) != "baja")
+            .where(AthleteModel.inactive_since.is_not(None))
+            .values(inactive_since=None)
+        )
+        await self.db.execute(reset_query)
+        
+        # 2. Asignar inactive_since para los nuevos atletas en 'Baja'
+        set_inactive_query = (
+            update(AthleteModel)
+            .where(func.lower(AthleteModel.client_status) == "baja")
+            .where(AthleteModel.inactive_since.is_(None))
+            .values(inactive_since=now)
+        )
+        await self.db.execute(set_inactive_query)
+        
+        # 3. Encontrar atletas que han estado inactivos por > 3 meses
+        find_expired_query = (
+            select(AthleteModel.id, AthleteModel.name)
+            .where(func.lower(AthleteModel.client_status) == "baja")
+            .where(AthleteModel.inactive_since <= three_months_ago)
+        )
+        result = await self.db.execute(find_expired_query)
+        expired_athletes = result.all()
+        
+        deleted_count = 0
+        
+        if expired_athletes:
+            athlete_ids = [row[0] for row in expired_athletes]
+            
+            # Iniciar eliminacion en cascada manual
+            # Eliminar sus planes de entrenamiento
+            del_plans_stmt = delete(TrainingPlanModel).where(TrainingPlanModel.athlete_id.in_(athlete_ids))
+            await self.db.execute(del_plans_stmt)
+            
+            # Eliminar sus sesiones de chat
+            del_sessions_stmt = delete(ChatSessionModel).where(ChatSessionModel.athlete_id.in_(athlete_ids))
+            await self.db.execute(del_sessions_stmt)
+            
+            # Eliminar los atletas
+            del_athletes_stmt = delete(AthleteModel).where(AthleteModel.id.in_(athlete_ids))
+            await self.db.execute(del_athletes_stmt)
+            
+            deleted_count = len(athlete_ids)
+            logger.info(f"Se eliminaron {deleted_count} atletas inactivos (y sus datos asociados): {[row[1] for row in expired_athletes]}")
+        
+        await self.db.commit()
+        return {"deleted_count": deleted_count}
 

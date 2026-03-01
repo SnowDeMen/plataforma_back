@@ -18,6 +18,7 @@ from app.infrastructure.database.models import AthleteModel
 from app.application.use_cases.sync_use_cases import AthleteAutomationUseCase
 from app.application.use_cases.notification_use_cases import NotificationUseCases
 from app.application.use_cases.admin_use_cases import AdminUseCases
+from app.application.use_cases.athlete_use_cases import AthleteUseCases
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from app.infrastructure.repositories.system_settings_repository import SystemSettingsRepository
@@ -163,6 +164,16 @@ async def _setup_scheduler(app: FastAPI) -> None:
     if settings.RUN_STARTUP_TASKS:
         scheduler.add_job(_run_telegram_notification_task, id="telegram_notification_initial")
         
+    # Job: Limpieza de atletas inactivos (Baja > 3 meses)
+    scheduler.add_job(
+        _run_inactive_athlete_cleanup_task,
+        trigger=IntervalTrigger(hours=24),
+        id="inactive_athlete_cleanup",
+        replace_existing=True
+    )
+    if settings.RUN_STARTUP_TASKS:
+        scheduler.add_job(_run_inactive_athlete_cleanup_task, id="inactive_athlete_cleanup_initial")
+        
     scheduler.start()
     app.state.scheduler = scheduler
     logger.info(f"Programador de tareas iniciado (Sync, Entrenamientos, Telegram)")
@@ -178,14 +189,25 @@ async def _run_telegram_notification_task() -> None:
     except Exception as e:
         logger.error(f"Error en tarea de notificación de Telegram: {e}")
 
+async def _run_inactive_athlete_cleanup_task() -> None:
+    """Ejecuta la logica de limpieza de atletas inactivos (Baja > 3 meses)."""
+    try:
+        logger.info("Iniciando tarea de limpieza de atletas inactivos...")
+        async with AsyncSessionLocal() as db:
+            use_case = AthleteUseCases(db)
+            result = await use_case.process_inactive_athletes()
+            logger.info(f"Limpieza de inactivos completada: {result}")
+    except Exception as e:
+        logger.error(f"Error en tarea de limpieza de inactivos: {e}")
+        logger.exception(e)
+
 
 async def _run_sync_task() -> None:
-    """Ejecuta la logica de sincronizacion de Airtable."""
+    """Ejecuta la logica de sincronizacion de Airtable y Training Peaks."""
     try:
         logger.info("Iniciando Airtable -> Postgres sync (tarea programada)...")
         # Reusamos la logica del script CLI
         service, pg_repo, _ = build_from_env(pg_dsn_env="DATABASE_URL")
-        
         config = get_table_sync_config(
             airtable_table_name=settings.AIRTABLE_TABLE_NAME,
             airtable_last_modified_field=settings.AIRTABLE_LAST_MOD_FIELD,
@@ -201,14 +223,16 @@ async def _run_sync_task() -> None:
         result = await asyncio.to_thread(service.run_once, config=config, pg_lock_key=lock_key)
         logger.info(f"Sync finalizado: upserted_rows={result.upserted_rows}, new_inserts={len(result.new_record_ids)}")
         
-        # Si hay atletas nuevos, disparar flujo de automatización inicial
-        if result.new_record_ids:
-            logger.info(f"Disparando automatización inicial para {len(result.new_record_ids)} atletas nuevos")
-            async with AsyncSessionLocal() as db:
-                automation = AthleteAutomationUseCase(db)
-                for athlete_id in result.new_record_ids:
-                    # El flujo completo: Sync TP Profile -> Sync Historial -> Generación Plan
-                    await automation.automate_athlete_sync_and_generation(athlete_id)
+        # Orquestar automatizaciones para atletas nuevos y reintentos TP
+        async with AsyncSessionLocal() as db:
+            automation = AthleteAutomationUseCase(db)
+            
+            # 1. Automatización inicial para atletas nuevos
+            await automation.process_new_athletes(result.new_record_ids)
+            
+            # 2. Reintentar sincronización de TP para atletas activos sin nombres
+            exclude_ids = result.new_record_ids if result.new_record_ids else []
+            await automation.sync_missing_tp_names(exclude_ids=exclude_ids)
         
     except Exception as e:
         logger.error(f"Error en tarea de sync programada: {e}")
@@ -224,43 +248,10 @@ async def _run_periodic_training_generation_task() -> None:
         logger.info("Iniciando revisión de atletas para generación periódica de entrenamientos...")
         
         async with AsyncSessionLocal() as db:
-            # 1. Status no es 'Inactivo' (asumimos por ahora los que están en la plataforma)
-            # 2. last_training_generation_at es NULL o hace más de X días (configurable)
-            
-            threshold_date = datetime.now() - timedelta(days=settings.ATHLETE_TRAINING_GEN_THRESHOLD_DAYS)
-            
-            query = select(AthleteModel).where(
-                or_(
-                    AthleteModel.last_training_generation_at == None,
-                    AthleteModel.last_training_generation_at <= threshold_date
-                )
-            ).where(
-                AthleteModel.is_deleted == False
-            ).where(
-                func.lower(AthleteModel.client_status).in_(["activo", "prueba"])
-            )
-            
-            result = await db.execute(query)
-            athletes = result.scalars().all()
-            
-            if not athletes:
-                logger.info("No hay atletas que requieran generación periódica en este momento.")
-                return
-
-            logger.info(f"Se encontraron {len(athletes)} atletas para revisión de automatización.")
-            
             automation = AthleteAutomationUseCase(db)
-            
-            for athlete in athletes:
-                athlete_id = athlete.id
-                athlete_name = athlete.name
-                try:
-                    # Ejecutar el flujo de automatización reutilizable
-                    await automation.automate_athlete_sync_and_generation(athlete_id)
-                    
-                except Exception as ex:
-                    logger.error(f"Error procesando automatización para {athlete_name}: {ex}")
-                    continue
+            await automation.generate_periodic_trainings(
+                threshold_days=settings.ATHLETE_TRAINING_GEN_THRESHOLD_DAYS
+            )
 
     except Exception as e:
         logger.error(f"Error en tarea de generación periódica: {e}")

@@ -381,7 +381,8 @@ class TPSyncUseCases:
             AirtableClient, AirtableCredentials
         )
         
-        AIRTABLE_TABLE_ID = "tblMNRYRfYTWYpc5o"  # Table ID de Formulario_Inicial
+        from app.core.config import settings
+        
         TP_NAME_FIELD_ID = "fldmVrBQxHtlN4qXL"  # Field ID de tp_name
         
         job_tag = f"[tp-sync-job:{job_id}]" if job_id else "[tp-sync]"
@@ -390,13 +391,13 @@ class TPSyncUseCases:
             airtable_token = os.environ.get("AIRTABLE_TOKEN")
             airtable_base_id = os.environ.get("AIRTABLE_BASE_ID")
             
-            if airtable_token and airtable_base_id:
+            if airtable_token and airtable_base_id and settings.AIRTABLE_TABLE_NAME:
                 client = AirtableClient(
                     AirtableCredentials(token=airtable_token, base_id=airtable_base_id)
                 )
                 logger.info(f"{job_tag} Actualizando Airtable: record={record_id}")
                 client.update_record(
-                    table_name=AIRTABLE_TABLE_ID,
+                    table_name=settings.AIRTABLE_TABLE_NAME,
                     record_id=record_id,
                     fields={TP_NAME_FIELD_ID: tp_name}
                 )
@@ -426,5 +427,5 @@ class TPSyncUseCases:
                     record_id=record_id,
                     fields={"Cuenta TrainingPeaks": tp_username}
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.exception(f"[tp-sync] Error actualizando username en Airtable: {e}")

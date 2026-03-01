@@ -20,6 +20,30 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     use_cases = AdminUseCases(db)
     return await use_cases.get_system_settings()
 
+@router.get("/athletes/pending-testing-plan")
+async def get_pending_testing_plans(db: AsyncSession = Depends(get_db)):
+    """
+    Obtiene la lista de atletas candidatos a recibir el plan de prueba de 1 semana.
+    """
+    use_cases = AdminUseCases(db)
+    return await use_cases.get_pending_testing_plans()
+
+@router.post("/athletes/{athlete_id}/assign-testing-plan")
+async def assign_testing_plan(athlete_id: str, db: AsyncSession = Depends(get_db)):
+    """
+    Asigna mediante Selenium el plan de prueba recomendado al atleta especificado.
+    """
+    use_cases = AdminUseCases(db)
+    result = await use_cases.assign_testing_plan(athlete_id)
+    
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=500,
+            detail=result.get("error", "Error desconocido asignando el plan")
+        )
+        
+    return result
+
 @router.post("/test-notification")
 async def test_notification(db: AsyncSession = Depends(get_db)):
     """
@@ -77,3 +101,19 @@ async def update_notification_interval(
             return {"message": f"Configuración guardada, pero hubo un error al reiniciar el job: {str(e)}", "success": True}
             
     return {"message": f"Configuración guardada para el próximo reinicio", "success": True}
+
+@router.post("/settings/days-in-advance")
+async def update_days_in_advance_generation(
+    days: int, 
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Actualiza el número de días de anticipación con los que se genera el próximo plan mensual basado en plan_end_date.
+    """
+    use_cases = AdminUseCases(db)
+    success = await use_cases.update_days_in_advance_generation(days)
+    
+    if not success:
+        raise HTTPException(status_code=400, detail="Días de anticipación inválidos (debe ser >= 0)")
+        
+    return {"message": f"Días de anticipación actualizados a {days}", "success": True}

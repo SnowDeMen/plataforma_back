@@ -9,9 +9,9 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from loguru import logger
-from typing import Optional
+from typing import Optional, Dict, List
 
 
 class AthleteService:
@@ -395,6 +395,86 @@ class AthleteService:
         logger.error(f"Fallo la seleccion de atleta para: {name}. Intentos: {variations}")
         raise AthleteNotFoundInTPException(name, variations)
     
+    def get_last_workout_date(self, name: str, timeout: int = 10) -> Optional[str]:
+        """
+        Extacts the last planned workout date from the left sidebar of the calendar.
+        The date is in the format M/D/YY under the <p class="lastPlannedWorkout"> element
+        for the given athlete.
+        """
+        self.click_athlete_library()
+        self.expand_all_athlete_libraries()
+        
+        wait = WebDriverWait(self._driver, timeout)
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "[data_cy='itemsContainer']")))
+        except TimeoutException:
+            logger.warning("No se pudo cargar el contenedor de la lista de atletas.")
+            return None
+            
+        name_literal = self._xpath_literal(name.strip())
+        
+        # Buscar el tile exacto del atleta y luego el elemento lastPlannedWorkout
+        xpath = (
+            "//div[@data_cy='itemsContainer']"
+            "//div[contains(@class,'athleteTile')]"
+            f"[.//div[@data_cy='athleteTileName']/span[normalize-space(text()) = {name_literal}]]"
+            "//p[@class='lastPlannedWorkout']"
+        )
+        
+        try:
+            date_element = self._driver.find_element(By.XPATH, xpath)
+            date_str = date_element.text.strip()
+            
+            if date_str:
+                logger.info(f"Last planned workout found for '{name}': {date_str}")
+                return date_str
+            return None
+        except NoSuchElementException:
+            logger.warning(f"No se encontro fecha (lastPlannedWorkout) para el atleta '{name}'")
+            return None
+        except Exception as e:
+            logger.error(f"Error extrayendo fecha de lastPlannedWorkout para '{name}': {e}")
+            return None
+
+    def get_all_last_workout_dates(self, timeout: int = 10) -> Dict[str, str]:
+        """
+        Extacts the last planned workout date from the left sidebar of the calendar for ALL athletes.
+        Returns a dictionary mapping athlete_name (lowercase) to their date string.
+        """
+        self.click_athlete_library()
+        self.expand_all_athlete_libraries()
+        
+        wait = WebDriverWait(self._driver, timeout)
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "[data_cy='itemsContainer']")))
+        except TimeoutException:
+            logger.warning("No se pudo cargar el contenedor de la lista de atletas.")
+            return {}
+            
+        xpath = "//div[@data_cy='itemsContainer']//div[contains(@class,'athleteTile')]"
+        try:
+            tiles = self._driver.find_elements(By.XPATH, xpath)
+            dates = {}
+            for tile in tiles:
+                try:
+                    name_span = tile.find_element(By.XPATH, ".//div[@data_cy='athleteTileName']/span")
+                    name = name_span.text.strip().lower()
+                    
+                    try:
+                        date_p = tile.find_element(By.XPATH, ".//p[@class='lastPlannedWorkout']")
+                        date_str = date_p.text.strip()
+                        if date_str:
+                            dates[name] = date_str
+                    except NoSuchElementException:
+                        pass
+                except Exception:
+                    continue
+            logger.info(f"Se encontraron fechas de lastPlannedWorkout para {len(dates)} atletas.")
+            return dates
+        except Exception as e:
+            logger.error(f"Error extrayendo multiples fechas desde la vista de calendario: {e}")
+            return {}
+
     # =========================================================================
     # METODOS PARA BUSQUEDA POR USERNAME (Pagina #home)
     # =========================================================================
@@ -458,12 +538,30 @@ class AthleteService:
             return []
         
         # Obtener todos los tiles de atletas (estructura de pagina #home)
-        tiles = self._driver.find_elements(
+        all_tiles = self._driver.find_elements(
             By.CSS_SELECTOR, 
             ".athleteListAthletes .athleteCoachHome"
         )
         
-        logger.info(f"Se encontraron {len(tiles)} tiles de atletas")
+        # Filtrar elementos visibles y deduplicar por nombre (TP renderiza grilla y lista duplicadas)
+        tiles = []
+        seen_names = set()
+        
+        for t in all_tiles:
+            try:
+                if not t.is_displayed():
+                    continue
+                # Se extrae el nombre para asegurar que no agregamos el mismo atleta dos veces
+                name = self.get_athlete_name_from_tile(t)
+                if name:
+                    name_lower = name.lower()
+                    if name_lower not in seen_names:
+                        seen_names.add(name_lower)
+                        tiles.append(t)
+            except StaleElementReferenceException:
+                continue
+        
+        logger.info(f"Se encontraron {len(tiles)} tiles unicos visibles (de {len(all_tiles)} en el DOM)")
         return tiles
     
     def click_athlete_settings_button(self, athlete_tile, timeout: int = 10) -> bool:
@@ -1043,6 +1141,7 @@ class AthleteService:
         Returns:
             dict: Resultado parcial con found/full_name/tiles_checked
         """
+        username = username.strip().lower()
         result = {
             "found": False,
             "username": username,
@@ -1083,9 +1182,9 @@ class AthleteService:
                 continue
             
             result["tiles_checked"] += 1
-            modal_username = self.get_username_from_modal()
+            modal_username = self.get_username_from_modal().strip().lower()
             
-            if modal_username.lower() == username.lower():
+            if modal_username == username:
                 full_name = self.get_full_name_from_modal()
                 result["found"] = True
                 result["full_name"] = full_name
@@ -1130,6 +1229,7 @@ class AthleteService:
         Returns:
             dict: Resultado actualizado con found/full_name si hay match
         """
+        username = username.strip().lower()
         tiles = self.get_athlete_tiles(timeout)
         
         if not tiles:
@@ -1151,9 +1251,9 @@ class AthleteService:
                 continue
             
             result["tiles_checked"] += 1
-            modal_username = self.get_username_from_modal()
+            modal_username = self.get_username_from_modal().strip().lower()
             
-            if modal_username.lower() == username.lower():
+            if modal_username == username:
                 full_name = self.get_full_name_from_modal()
                 result["found"] = True
                 result["full_name"] = full_name
@@ -1253,6 +1353,9 @@ class AthleteService:
         total_tiles_checked = 0
         current_group = "My Athletes"
         remaining_groups = []  # Se obtiene lazy despues del primer grupo
+        
+        # Normalizar username de entrada
+        username = username.strip().lower()
         
         # =====================================================================
         # PASE 1: Busqueda rapida por primer nombre (si hay expected_name)

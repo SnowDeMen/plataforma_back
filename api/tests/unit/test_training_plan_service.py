@@ -52,8 +52,8 @@ class TestClickTrainingPlansTab:
             mock_element.click.assert_called_once()
 
 
-class TestIsMyPlansExpanded:
-    """Tests para is_my_plans_expanded."""
+class TestIsFolderExpanded:
+    """Tests para is_folder_expanded."""
 
     @pytest.fixture
     def service(self) -> TrainingPlanService:
@@ -62,7 +62,7 @@ class TestIsMyPlansExpanded:
         mock_wait = Mock()
         return TrainingPlanService(mock_driver, mock_wait)
 
-    def test_is_my_plans_expanded_returns_true_when_expanded(self, service: TrainingPlanService) -> None:
+    def test_is_folder_expanded_returns_true_when_expanded(self, service: TrainingPlanService) -> None:
         """Verifica que retorna True si tiene clase 'expanded'."""
         mock_folder = Mock()
         mock_folder.get_attribute.return_value = "coachTrainingPlanLibraryFolder expanded"
@@ -72,11 +72,11 @@ class TestIsMyPlansExpanded:
             mock_webdriver_wait.return_value = mock_wait_instance
             mock_wait_instance.until.return_value = mock_folder
             
-            result = service.is_my_plans_expanded()
+            result = service.is_folder_expanded("Testing runner")
             
             assert result is True
 
-    def test_is_my_plans_expanded_returns_false_when_not_expanded(self, service: TrainingPlanService) -> None:
+    def test_is_folder_expanded_returns_false_when_not_expanded(self, service: TrainingPlanService) -> None:
         """Verifica que retorna False si no tiene clase 'expanded'."""
         mock_folder = Mock()
         mock_folder.get_attribute.return_value = "coachTrainingPlanLibraryFolder"
@@ -90,7 +90,7 @@ class TestIsMyPlansExpanded:
             mock_webdriver_wait.return_value = mock_wait_instance
             mock_wait_instance.until.return_value = mock_folder
             
-            result = service.is_my_plans_expanded()
+            result = service.is_folder_expanded("Testing runner")
             
             assert result is False
 
@@ -109,7 +109,7 @@ class TestFindAndClickTrainingPlan:
         """Verifica que hace scroll y click en el plan encontrado."""
         mock_tile = Mock()
         
-        with patch.object(service, 'expand_my_plans'):
+        with patch.object(service, 'expand_folder'):
             with patch('app.infrastructure.driver.services.training_plan_service.WebDriverWait') as mock_webdriver_wait:
                 mock_wait_instance = Mock()
                 mock_webdriver_wait.return_value = mock_wait_instance

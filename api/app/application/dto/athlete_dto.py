@@ -116,6 +116,8 @@ class DeportivaInfoDTO(BaseModel):
     equipo: Optional[str] = None
     equipoDisponible: Optional[str] = None
     eventoObjetivo: Optional[str] = None
+    tipoEvento: Optional[str] = None
+    eventosSecundarios: Optional[str] = None
     diasParaEvento: Optional[int] = None
     dedicacion: Optional[str] = None
     
@@ -200,7 +202,7 @@ class AthleteStatusUpdateDTO(BaseModel):
     training_status: str = Field(
         ..., 
         description="Nuevo status del entrenamiento",
-        pattern="^(Por generar|Por revisar|Plan activo)$"
+        pattern="^(Por generar|Por revisar|Plan activo|En diagnóstico|Pendiente ingreso)$"
     )
     
     class Config:

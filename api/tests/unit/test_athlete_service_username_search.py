@@ -868,3 +868,25 @@ class TestAthleteServiceClickAndVerification:
         
         # NO debe llamar click porque ya estaba seleccionado
         mock_tile.click.assert_not_called()
+
+    def test_find_athlete_by_username_normalization(self, athlete_service):
+        """Verifica que find_athlete_by_username maneja espacios y casing."""
+        username_to_search = "  jdoe  "
+        modal_username = "JDOE"
+        expected_name = "John Doe"
+        
+        # Mockear comportamiento para llegar al modal
+        with patch.object(athlete_service, 'get_athlete_tiles', return_value=[Mock()]), \
+             patch.object(athlete_service, 'get_athlete_name_from_tile', return_value="John Doe"), \
+             patch.object(athlete_service, 'click_athlete_settings_button', return_value=True), \
+             patch.object(athlete_service, 'wait_for_settings_modal', return_value=True), \
+             patch.object(athlete_service, 'get_username_from_modal', return_value=modal_username), \
+             patch.object(athlete_service, 'get_full_name_from_modal', return_value="John Doe"), \
+             patch.object(athlete_service, 'close_settings_modal', return_value=True), \
+             patch.object(athlete_service, 'get_available_groups', return_value=[{"name": "My Athletes"}]), \
+             patch.object(athlete_service, '_navigate_to_group', return_value=True):
+            
+            result = athlete_service.find_athlete_by_username(username_to_search, expected_name)
+            
+            assert result["found"] is True
+            assert result["full_name"] == "John Doe"

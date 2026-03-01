@@ -77,9 +77,15 @@ def _get_global_semaphore() -> asyncio.Semaphore:
 
 def _shutdown_executor() -> None:
     """Cierra el executor de Selenium al terminar la aplicacion."""
-    logger.info("Cerrando ThreadPoolExecutor de Selenium...")
+    try:
+        logger.info("Cerrando ThreadPoolExecutor de Selenium...")
+    except ValueError:
+        pass
     _selenium_executor.shutdown(wait=True)
-    logger.info("ThreadPoolExecutor de Selenium cerrado")
+    try:
+        logger.info("ThreadPoolExecutor de Selenium cerrado")
+    except ValueError:
+        pass
 
 
 # Registrar cleanup al terminar la aplicacion
