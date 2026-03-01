@@ -310,6 +310,7 @@ class TestTPDataNormalizer:
                 "feel_value": 5,
                 "feel_label": "Very Strong",
                 "rpe_value": 2,
+                "rpe_label": "Very easy",
             },
         }
         normalized, validation = normalizer.normalize_workout(workout_with_rpe)
@@ -317,6 +318,7 @@ class TestTPDataNormalizer:
         assert normalized["feel"] == 5
         assert normalized["feel_label"] == "Very Strong"
         assert normalized["rpe"] == 2
+        assert normalized["rpe_label"] == "Very easy"
         assert "Feel" in validation.fields_present
         assert "RPE" in validation.fields_present
 
@@ -327,6 +329,7 @@ class TestTPDataNormalizer:
         assert normalized["feel"] is None
         assert normalized["feel_label"] is None
         assert normalized["rpe"] is None
+        assert normalized["rpe_label"] is None
 
     def test_normalize_workout_validates_rpe_out_of_range(self, normalizer):
         """Debe generar warning cuando RPE esta fuera de rango 0-10."""

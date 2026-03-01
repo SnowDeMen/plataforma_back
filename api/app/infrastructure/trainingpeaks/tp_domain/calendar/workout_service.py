@@ -647,17 +647,17 @@ def get_calendar_quickview_data(timeout=20):
     # -------------------------------------------------------------------------
     # 9) Esfuerzo percibido / RPE (solo workouts completados)
     # -------------------------------------------------------------------------
-    # NOTA: La extracción principal de RPE/feel ocurre a nivel de CARD en
-    # get_all_quickviews_on_date() via _extract_rpe_from_card(), que lee
-    # span.rpEffortRating y div.rpeEmojiIcon directamente de la tarjeta del
-    # workout. Esa extracción es per-workout confiable.
+    # Estrategia de extraccion con 3 niveles (del mas especifico al mas generico):
     #
-    # Este bloque es un fallback ligero: intenta leer .rpeText/.feelText
-    # dentro del QV, pero estos elementos NO siempre se renderizan dentro
-    # de #quickViewContent (posible React portal). El resultado puede ser
-    # stale si se reutiliza el mismo componente MUI para todos los workouts.
-    # Cuando get_all_quickviews_on_date() obtiene datos de la card, sobreescribe
-    # este valor con data["perceived_exertion"] = card_rpe.
+    # A) Selectores del modal TP (DOM real):
+    #    - Feel: .emojiSelector .emojiScale -> posicion del .emoji.selectedEmoji (1-5)
+    #    - RPE:  .rpeInputContainer input.singleRangeSlider[value] (0-10)
+    #           + .rpeTitle para la etiqueta descriptiva
+    #
+    # B) Selectores MUI legacy (.rpeText / .feelText) como fallback.
+    #
+    # C) Card-level override en get_all_quickviews_on_date() via
+    #    _extract_rpe_from_card() que sobreescribe si tiene datos.
     _FEEL_LABEL_TO_VALUE = {
         "very weak": 1,
         "weak": 2,
@@ -666,21 +666,50 @@ def get_calendar_quickview_data(timeout=20):
         "very strong": 5,
     }
 
+    _FEEL_INDEX_TO_LABEL = {
+        1: "Very Weak",
+        2: "Weak",
+        3: "Normal",
+        4: "Strong",
+        5: "Very Strong",
+    }
+
     perceived_exertion = {}
 
     rpe_value = None
+    rpe_label = None
     feel_value = None
     feel_label = None
 
-    # Intentar solo dentro de #quickViewContent (scoped, no page-wide).
+    # A) Selectores del modal TP (emojiSelector + rpeInputContainer).
     rpe_feel_data = _safe(lambda: driver.execute_script("""
         var qv = arguments[0];
-        var r = qv.querySelector('.rpeText');
-        var f = qv.querySelector('.feelText');
-        return {
-            rpe: r ? r.textContent.trim() : null,
-            feel: f ? f.textContent.trim() : null
-        };
+        var result = {rpe: null, rpe_label: null, feel_index: null};
+
+        // RPE: input slider dentro de .rpeInputContainer
+        var slider = qv.querySelector('.rpeInputContainer input.singleRangeSlider');
+        if (slider) {
+            result.rpe = slider.value || slider.getAttribute('value');
+        }
+        // RPE label descriptivo (e.g. "Somewhat hard")
+        var rpeTitle = qv.querySelector('.rpeInputContainer .rpeTitle');
+        if (rpeTitle) {
+            result.rpe_label = rpeTitle.textContent.trim();
+        }
+
+        // Feel: posicion (1-based) del emoji con clase selectedEmoji
+        var scale = qv.querySelector('.emojiSelector .emojiScale');
+        if (scale) {
+            var emojis = scale.querySelectorAll('.emoji');
+            for (var i = 0; i < emojis.length; i++) {
+                if (emojis[i].classList.contains('selectedEmoji')) {
+                    result.feel_index = i + 1;  // 1-based
+                    break;
+                }
+            }
+        }
+
+        return result;
     """, qv_root))
 
     if rpe_feel_data:
@@ -688,18 +717,48 @@ def get_calendar_quickview_data(timeout=20):
         if rpe_raw:
             try:
                 rpe_value = int(rpe_raw)
+                if not (0 <= rpe_value <= 10):
+                    rpe_value = None
             except (ValueError, TypeError):
                 pass
+        rpe_label = rpe_feel_data.get("rpe_label") or None
 
-        feel_label = rpe_feel_data.get("feel")
-        if feel_label:
-            feel_value = _FEEL_LABEL_TO_VALUE.get(feel_label.strip().lower())
+        feel_idx = rpe_feel_data.get("feel_index")
+        if feel_idx is not None and 1 <= feel_idx <= 5:
+            feel_value = feel_idx
+            feel_label = _FEEL_INDEX_TO_LABEL.get(feel_idx)
+
+    # B) Fallback: selectores MUI legacy (.rpeText / .feelText)
+    if rpe_value is None and feel_value is None:
+        legacy_data = _safe(lambda: driver.execute_script("""
+            var qv = arguments[0];
+            var r = qv.querySelector('.rpeText');
+            var f = qv.querySelector('.feelText');
+            return {
+                rpe: r ? r.textContent.trim() : null,
+                feel: f ? f.textContent.trim() : null
+            };
+        """, qv_root))
+
+        if legacy_data:
+            rpe_raw = legacy_data.get("rpe")
+            if rpe_raw:
+                try:
+                    rpe_value = int(rpe_raw)
+                except (ValueError, TypeError):
+                    pass
+
+            legacy_feel = legacy_data.get("feel")
+            if legacy_feel:
+                feel_label = legacy_feel
+                feel_value = _FEEL_LABEL_TO_VALUE.get(legacy_feel.strip().lower())
 
     if rpe_value is not None or feel_value is not None:
         perceived_exertion = {
             "feel_value": feel_value,   # 1-5 int or None
             "feel_label": feel_label,   # e.g. "Very Strong" or None
             "rpe_value": rpe_value,     # 0-10 int or None
+            "rpe_label": rpe_label,     # e.g. "Somewhat hard" or None
         }
 
     # -------------------------------------------------------------------------

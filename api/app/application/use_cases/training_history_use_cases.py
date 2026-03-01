@@ -140,7 +140,6 @@ class TrainingHistoryUseCases:
         opts.add_argument("--window-size=1920,1080")
         opts.add_argument("--disable-extensions")
         opts.add_argument("--disable-infobars")
-        opts.add_argument("--remote-debugging-port=9222")
 
         driver = webdriver.Chrome(options=opts)
         wait = WebDriverWait(driver, 10)
@@ -149,14 +148,17 @@ class TrainingHistoryUseCases:
 
     async def _run_job(self, *, job_id: str, athlete_id: str, dto: TrainingHistorySyncRequestDTO) -> None:
         """
-        Ejecuta la extracción hacia atrás con criterio stop_after_gap y persiste en DB.
+        Ejecuta la extracción hacia atrás y persiste en DB.
+
+        Criterios de parada (evaluados en orden de prioridad):
+        1. Si `dto.from_date` existe, el barrido se detiene al llegar a esa fecha.
+        2. Si no, se aplica gap_days: corta tras `gap_days` días vacíos consecutivos
+           después de haber encontrado al menos un workout.
 
         Implementación:
-        - Itera día a día hacia atrás.
-        - Usa funciones de calendario (Selenium) con `use_today` solo en la primera llamada
-          para acelerar el barrido.
-        - Corta cuando hay `gap_days` sin entrenos luego de haber encontrado al menos uno.
-        
+        - Itera día a día hacia atrás desde hoy.
+        - Usa funciones de calendario (Selenium) con `use_today` solo en la primera llamada.
+
         Nota: Las operaciones de Selenium se ejecutan en threads separados via run_selenium()
         para no bloquear el event loop y permitir que el healthcheck responda.
         """
@@ -199,10 +201,15 @@ class TrainingHistoryUseCases:
                 checked_days = 0
                 error_days = 0
 
+                use_from_date = dto.from_date is not None
                 max_days = 365 * 25
                 days: Dict[str, Any] = {}
 
                 while checked_days < max_days:
+                    # Parada por from_date: no ir mas atras de la fecha solicitada.
+                    if use_from_date and cursor < dto.from_date:
+                        break
+
                     iso = cursor.isoformat()
 
                     if checked_days % 7 == 0:
@@ -213,7 +220,6 @@ class TrainingHistoryUseCases:
                         )
 
                     try:
-                        # Ejecutar extraccion en thread para no bloquear el event loop
                         workouts_for_day = await run_selenium(
                             get_all_quickviews_on_date,
                             iso,
@@ -228,7 +234,6 @@ class TrainingHistoryUseCases:
                     finally:
                         first_call = False
 
-                    # Aplicar límites por workout para evitar payloads excesivos (HTML/texto).
                     if workouts_for_day:
                         limited_day: list[dict] = []
                         for w in workouts_for_day:
@@ -236,7 +241,6 @@ class TrainingHistoryUseCases:
                                 limited, _ = enforce_workout_limits(w)
                                 limited_day.append(limited)
                             else:
-                                # Si por alguna razón viene un tipo inesperado, lo preservamos como dict mínimo.
                                 limited_day.append({"_raw": str(w)[:500]})
                         workouts_for_day = limited_day
 
@@ -245,7 +249,8 @@ class TrainingHistoryUseCases:
                         consecutive_empty = 0
                         days[iso] = workouts_for_day
                     else:
-                        if has_found_any:
+                        # Parada por gap solo cuando no se usa from_date.
+                        if not use_from_date and has_found_any:
                             consecutive_empty += 1
                             if should_stop_after_gap(
                                 has_found_any_workout=has_found_any,

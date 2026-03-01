@@ -149,7 +149,6 @@ class DriverManager:
         opts.add_argument("--window-size=1920,1080")
         opts.add_argument("--disable-extensions")
         opts.add_argument("--disable-infobars")
-        opts.add_argument("--remote-debugging-port=9222")
         
         driver = webdriver.Chrome(options=opts)
         wait = WebDriverWait(driver, 10)
@@ -186,7 +185,6 @@ class DriverManager:
         opts.add_argument("--window-size=1920,1080")
         opts.add_argument("--disable-extensions")
         opts.add_argument("--disable-infobars")
-        opts.add_argument("--remote-debugging-port=9222")
         
         driver = webdriver.Chrome(options=opts)
         wait = WebDriverWait(driver, 10)

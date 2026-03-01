@@ -213,9 +213,10 @@ class TPDataNormalizer:
         
         # --- Esfuerzo percibido (solo workouts completados) ---
         perceived = raw.get("perceived_exertion") or {}
-        feel = self._parse_int(perceived.get("feel_value"))   # 1-5 or None
-        feel_label = perceived.get("feel_label") or None      # "Very Strong", etc.
-        rpe = self._parse_int(perceived.get("rpe_value"))     # 0-10 or None
+        feel = self._parse_int(perceived.get("feel_value"))     # 1-5 or None
+        feel_label = perceived.get("feel_label") or None        # "Very Strong", etc.
+        rpe = self._parse_int(perceived.get("rpe_value"))       # 0-10 or None
+        rpe_label = perceived.get("rpe_label") or None          # "Somewhat hard", etc.
         
         # --- Inferir estado ---
         status = self._infer_status(
@@ -292,6 +293,7 @@ class TPDataNormalizer:
             "feel": feel,             # 1-5 (How did you feel?) or None
             "feel_label": feel_label, # e.g. "Very Strong", "Normal", or None
             "rpe": rpe,               # 0-10 (Rating of Perceived Exertion) or None
+            "rpe_label": rpe_label,   # e.g. "Somewhat hard", "Moderate" or None
             
             # Metadata
             "_validation": {

@@ -151,7 +151,10 @@ class AthleteContextBuilder:
                         f"Sensacion:{w_feel}/5" + (f"({feel_lbl})" if feel_lbl else "")
                     )
                 if w_rpe is not None:
-                    rpe_parts.append(f"RPE:{w_rpe}/10")
+                    rpe_lbl = w.get("rpe_label", "")
+                    rpe_parts.append(
+                        f"RPE:{w_rpe}/10" + (f"({rpe_lbl})" if rpe_lbl else "")
+                    )
                 rpe_info = " | " + " ".join(rpe_parts) if rpe_parts else ""
                 
                 lines.append(
